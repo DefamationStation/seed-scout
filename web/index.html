@@ -1,30 +1,324 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Seed Scout</title><link rel="stylesheet" href="/style.css"></head>
-<body><main>
-<header><a class="brand" href="/"><span class="brand-icon">▦</span> Seed Scout</a><div class="version"><i></i> Java 26.4 Snapshot 2</div><button id="quit" class="quiet">Close app</button></header>
-<section class="intro"><span class="eyebrow">A BETTER PLACE TO BEGIN</span><h1>Find your next world.</h1><p>Pick what you want nearby. Let your snapshot find the seed.</p></section>
-<div class="workspace"><section class="panel controls">
-<div class="section-heading"><h2>Your ideal starting area</h2><span id="selection-count" class="tag">0 selected</span></div>
-<div class="presets"><button data-preset="starter">Village + cherry grove</button><button data-preset="island">Village + mushroom fields</button><button data-preset="adventure">Village + trial chamber</button></div>
-<div class="settings-grid"><label>Search around<select id="anchor"><option value="spawn">Spawn region</option><option value="custom">Specific coordinates</option></select></label><label>Default distance <span class="units">blocks</span><input id="radius" type="number" min="32" max="8000" step="100" value="1000"></label></div>
-<div id="coordinates" class="settings-grid" hidden><label>X<input id="x" type="number" value="0"></label><label>Z<input id="z" type="number" value="0"></label></div>
-<div class="feature-toolbar"><div class="tabs"><button class="active" data-kind="structure">Structures</button><button data-kind="biome">Biomes</button></div><input id="filter" type="search" placeholder="Find a feature…" aria-label="Filter features"></div>
-<div id="features" class="feature-list"><div class="loading">Starting the snapshot engine…</div></div>
-<div id="chosen" class="chosen"></div>
-<details><summary>Search controls <span>workers, starting seed, clustering</span></summary>
-<div class="settings-grid"><label>Parallel workers<select id="threads"><option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option></select></label><label>Results to find<input id="maxMatches" type="number" min="1" max="100" value="10"></label></div>
-<label>Biome search<select id="biomeMode"><option value="terrain">Terrain-aware surface checks</option><option value="fast">Fast candidates (can miss more)</option></select></label><p class="hint">Terrain-aware checks use actual base height and biome boundaries. Both modes sample every 32 blocks; narrow biome patches can still be missed.</p><label>Starting seed <span class="units">blank = random</span><input id="seed" type="text" inputmode="numeric" placeholder="Random 64-bit seed"></label>
-<div class="settings-grid"><label>Seed search budget<input id="limit" type="number" min="1" max="10000000" value="100000"></label><label>Max gap between matches <span class="units">0 = off</span><input id="cluster" type="number" min="0" max="16000" value="0"></label></div>
-<p class="hint">Clustering checks the nearest matches found. It can miss a different valid grouping.</p>
-</details>
-<div class="actions"><button id="start" class="primary" disabled>Start searching <span>→</span></button><button id="stop" class="secondary" hidden>Stop search</button><button id="resume" class="secondary" hidden>Resume</button></div>
-<div class="check-seed"><input id="inspect-seed" placeholder="Already have a seed? Check it here" aria-label="Seed to check"><button id="inspect" disabled>Check</button><button id="open-map">Open map</button></div>
-<p id="notice" class="notice" role="status">Loading the installed Minecraft generation code.</p>
-</section>
-<section class="results-area">
-<div class="stats"><div><strong id="tested">0</strong><span>seeds checked</span></div><div><strong id="rate">—</strong><span>seeds / second</span></div><div><strong id="matches">0</strong><span>matches found</span></div><span id="search-status" class="status">Starting engine</span></div>
-<div class="panel map-panel"><div class="section-heading"><h2 id="map-title">Your future neighbourhood</h2><span id="map-scale" class="tag">Feature positions</span></div><div id="map" class="map-empty"><div class="empty-icon">⌖</div><h3>A good world is out there.</h3><p>Search for a seed, then select a result<br>to see where everything is.</p></div><div class="map-footer"><span><i class="legend-anchor"></i> Search centre</span><span><i class="legend-feature"></i> Selected features</span><span>Snapshot base terrain</span></div></div>
-<div class="section-heading result-heading"><h2>Found worlds</h2><button id="export" class="quiet">Export results ↓</button></div><div id="results" class="result-list"><p class="empty-results">Matching seeds will appear here as they’re found.</p></div>
-<aside class="accuracy"><strong>Built for your snapshot</strong><p>Structure starts are checked with Minecraft’s own generator. Biome candidates use a 32-block scan, then terrain height and biome boundaries are checked. Small patches may be missed. The map computes base terrain; trees, structures, decorations, and later terrain changes are not rendered. Spawn is the generator’s starting region, so the final player position can shift. Default vanilla worlds only; custom generation datapacks are not included.</p></aside>
-</section></div><footer>Local search. No world saves touched. <span>Seed Scout / 26.4 Snapshot 2</span></footer>
-</main><script src="/map.js"></script><script src="/app.js"></script></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seed Scout</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app" id="app" data-panel="find">
+
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Seed Scout home">
+    <svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="7" fill="var(--accent)"/><path d="M7 7h6v6H7zM15 7h6v6h-6zM7 15h6v6H7z" fill="var(--accent-ink)" opacity=".9"/><path d="M18 14.5l3.5 3.5-3.5 3.5-3.5-3.5z" fill="var(--accent-ink)"/></svg>
+    <span>Seed Scout</span>
+  </a>
+  <form class="omnibox" id="open-form" autocomplete="off">
+    <span data-icon="search"></span>
+    <input id="open-seed" type="text" inputmode="numeric" placeholder="Open any seed on the map…" aria-label="Seed to open on the map">
+    <button type="submit" class="btn small">Open map</button>
+  </form>
+  <div class="topbar-end">
+    <button class="pill" id="search-status" data-state="starting" title="Show search results"><i></i><span>Starting engine</span></button>
+    <span class="version" id="version">Java 26.4 Snapshot 2</span>
+    <button id="quit" class="icon-btn" title="Close app (stops the local engine)" aria-label="Close app"><span data-icon="power"></span></button>
+  </div>
+</header>
+
+<nav class="rail" aria-label="Panels">
+  <button data-open="find" title="Find seeds"><span data-icon="search"></span><em>Find</em></button>
+  <button data-open="results" title="Found worlds"><span data-icon="list"></span><em>Results</em><b id="results-badge" hidden>0</b></button>
+  <button data-open="saved" title="Saved seeds and notes"><span data-icon="bookmark"></span><em>Saved</em><b id="saved-badge" hidden>0</b></button>
+  <button data-open="layers" title="Map layers and legend"><span data-icon="layers"></span><em>Layers</em></button>
+  <button data-open="map" class="only-narrow" title="Show the map"><span data-icon="map"></span><em>Map</em></button>
+  <span class="rail-gap"></span>
+  <button data-open="about" title="Accuracy and shortcuts"><span data-icon="info"></span><em>About</em></button>
+</nav>
+
+<aside class="panel" id="panel" aria-label="Side panel">
+
+  <!-- Find seeds -->
+  <section class="pane" data-pane="find">
+    <div class="pane-head">
+      <h2>Find seeds</h2>
+      <p>Pick what you want nearby, and what you want to avoid. Every condition must hold.</p>
+    </div>
+    <div class="pane-body">
+      <div class="group">
+        <h3>Search around</h3>
+        <input type="hidden" id="anchor" value="spawn">
+        <div class="segmented" role="group" aria-label="Search origin">
+          <button type="button" data-anchor="spawn"><span data-icon="spawn"></span>World spawn</button>
+          <button type="button" data-anchor="custom"><span data-icon="crosshair"></span>Coordinates</button>
+        </div>
+        <div id="coordinates" class="field-row" hidden>
+          <label class="field"><span>X</span><input id="x" type="number" value="0"></label>
+          <label class="field"><span>Z</span><input id="z" type="number" value="0"></label>
+        </div>
+        <label class="field inline"><span>Default distance</span><span class="with-unit"><input id="radius" type="number" min="32" max="8000" step="100" value="1000"><i>blocks</i></span></label>
+      </div>
+
+      <div class="group">
+        <div class="group-title"><h3>Features</h3><span class="count" id="selection-count">0 selected</span></div>
+        <div class="presets" aria-label="Presets">
+          <button data-preset="starter">Village + cherry grove</button>
+          <button data-preset="island">Village + mushroom fields</button>
+          <button data-preset="adventure">Village + trial chamber</button>
+        </div>
+        <div class="tabs">
+          <button class="active" data-kind="structure">Structures</button>
+          <button data-kind="biome">Biomes</button>
+        </div>
+        <div class="search-field"><span data-icon="search"></span><input id="filter" type="search" placeholder="Filter features…" aria-label="Filter features"></div>
+        <div id="features" class="feature-grid"><div class="loading">Starting the snapshot engine…</div></div>
+        <p class="hint" id="kind-hint">Structures are confirmed with Minecraft’s own generation-start checks.</p>
+      </div>
+
+      <div class="group" id="criteria-group">
+        <h3>Conditions</h3>
+        <div id="chosen" class="chosen"></div>
+      </div>
+
+      <details class="group advanced">
+        <summary><span data-icon="sliders"></span>Search controls<small>workers, starting seed, clustering</small><span class="chev" data-icon="chevron"></span></summary>
+        <div class="field-row">
+          <label class="field"><span>Parallel workers <i id="cores-hint"></i></span><select id="threads"><option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option></select></label>
+          <label class="field"><span>Results to find</span><input id="maxMatches" type="number" min="1" max="100" value="10"></label>
+        </div>
+        <label class="field"><span>Biome search</span><select id="biomeMode"><option value="terrain">Terrain-aware surface checks</option><option value="fast">Fast candidates (can miss more)</option><option value="exhaustive">Exhaustive terrain columns (slowest)</option></select></label>
+        <p class="hint">Terrain-aware checks estimate the surface height at each sample, then confirm candidates on the real terrain column. Exhaustive computes the column at every sample and is several times slower. All modes sample every 32 blocks; narrow biome patches can still be missed.</p>
+        <label class="field"><span>Starting seed <i>blank = random</i></span><input id="seed" type="text" inputmode="numeric" placeholder="Random 64-bit seed"></label>
+        <div class="field-row">
+          <label class="field"><span>Seed budget</span><input id="limit" type="number" min="1" max="10000000" value="1000000"></label>
+          <label class="field"><span>Max gap <i>0 = off</i></span><input id="cluster" type="number" min="0" max="16000" value="0"></label>
+        </div>
+        <p class="hint">Max gap is the largest distance allowed between matches. It checks the nearest matches found and can miss a different valid grouping.</p>
+      </details>
+
+      <details class="group advanced">
+        <summary><span data-icon="check-circle"></span>Check a seed you already have<span class="chev" data-icon="chevron"></span></summary>
+        <div class="input-action">
+          <input id="inspect-seed" type="text" inputmode="numeric" placeholder="Numeric seed" aria-label="Seed to check">
+          <button id="inspect" class="btn" disabled>Check</button>
+        </div>
+        <p class="hint">Tests the seed against the conditions above and opens it on the map if it matches.</p>
+      </details>
+    </div>
+    <div class="pane-foot">
+      <div class="actions">
+        <button id="start" class="btn primary" disabled><span data-icon="play"></span>Start searching</button>
+        <button id="stop" class="btn danger" hidden><span data-icon="stop"></span>Stop</button>
+        <button id="resume" class="btn" hidden>Resume</button>
+      </div>
+      <p id="notice" class="notice" role="status">Loading the installed Minecraft generation code.</p>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section class="pane" data-pane="results" hidden>
+    <div class="pane-head">
+      <h2>Found worlds</h2>
+      <p id="results-summary">Matching seeds appear here as they’re found.</p>
+    </div>
+    <div class="stats">
+      <div><strong id="tested">0</strong><span>seeds checked</span></div>
+      <div><strong id="rate">—</strong><span>per second</span></div>
+      <div><strong id="matches">0</strong><span>matches</span></div>
+    </div>
+    <div class="progress" id="progress" hidden><i></i></div>
+    <div class="run-actions" id="run-actions" hidden>
+      <button id="stop-results" class="btn danger small" hidden><span data-icon="stop"></span>Stop search</button>
+      <button id="resume-results" class="btn small" hidden><span data-icon="play"></span>Resume search</button>
+    </div>
+    <div class="pane-body" id="results"></div>
+    <div class="pane-foot">
+      <button id="export" class="btn block"><span data-icon="download"></span>Export results as JSON</button>
+    </div>
+  </section>
+
+  <!-- Saved seeds -->
+  <section class="pane" data-pane="saved" hidden>
+    <div class="pane-head">
+      <h2>Saved seeds</h2>
+      <p>Keep the worlds worth coming back to, with your own notes. Open one to pick up where you left it.</p>
+    </div>
+    <div class="tabs pane-tabs">
+      <button class="active" data-library="seeds">My seeds</button>
+      <button data-library="rare">Rare finds <span class="count" id="rare-count">0</span></button>
+    </div>
+    <div class="pane-view" data-library-view="seeds">
+      <div class="save-current" id="save-current" hidden>
+        <button class="btn primary block" id="save-open"><span data-icon="bookmark"></span>Save the open seed</button>
+      </div>
+      <div class="pane-body" id="saved-list"></div>
+    </div>
+    <div class="pane-view" data-library-view="rare" hidden>
+      <div class="rare-settings">
+        <p class="hint">When a search needs many seeds per match, its conditions and matching seeds are kept here automatically. Every new search checks these seeds first.</p>
+        <label class="toggle"><span class="toggle-text"><b>Check these seeds first</b><small>Turn off to search only new seeds</small></span><input type="checkbox" id="rare-first" checked><i class="switch"></i></label>
+        <label class="field inline"><span>Keep when rarer than 1 in</span><span class="with-unit"><input id="rare-threshold" type="number" min="100" max="100000000" step="10000" value="100000"><i>seeds</i></span></label>
+        <div class="rare-actions">
+          <button class="btn small" id="rare-export"><span data-icon="download"></span>Export</button>
+          <button class="btn small" id="rare-import"><span data-icon="upload"></span>Import</button>
+          <input type="file" id="rare-file" accept=".json,application/json" hidden>
+        </div>
+      </div>
+      <div class="pane-body" id="rare-list"></div>
+    </div>
+  </section>
+
+  <!-- Layers -->
+  <section class="pane" data-pane="layers" hidden>
+    <div class="pane-head">
+      <h2>Layers</h2>
+      <p>Everything on the map is a layer. Structures fill in by importance as you zoom.</p>
+    </div>
+    <div class="preset-bar">
+      <label class="field"><span>Preset</span><select id="layer-preset" aria-label="Layer preset"></select></label>
+      <button class="btn small" id="preset-save" title="Save the current layer setup as a preset"><span data-icon="bookmark"></span>Save</button>
+      <button class="icon-btn" id="preset-delete" title="Delete this preset" aria-label="Delete this preset" hidden><span data-icon="trash"></span></button>
+    </div>
+    <form class="preset-name" id="preset-form" hidden>
+      <input id="preset-name" type="text" maxlength="40" placeholder="Name this layer setup" aria-label="Preset name">
+      <button class="btn small primary" type="submit">Save preset</button>
+      <button class="btn small" type="button" id="preset-cancel">Cancel</button>
+    </form>
+    <div class="pane-body">
+      <div class="group">
+        <h3>Base map</h3>
+        <div class="basemaps" id="basemaps">
+          <button data-basemap="biome"><i class="thumb biome"></i><span>Biomes</span></button>
+          <button data-basemap="elevation"><i class="thumb elevation"></i><span>Elevation</span></button>
+        </div>
+      </div>
+      <div class="group">
+        <h3>Terrain</h3>
+        <div class="toggles" id="terrain-layers"></div>
+      </div>
+      <div class="group">
+        <h3>Markers</h3>
+        <div class="toggles" id="marker-layers"></div>
+      </div>
+      <div class="group">
+        <div class="group-title"><h3>Structures</h3><span class="count" id="zoom-chip">Z5</span><button class="link" id="features-reset">Reset</button><label class="toggle master" title="Show or hide every structure layer"><input type="checkbox" data-layer="structures"><i class="switch"></i></label></div>
+        <p class="hint" id="features-hint">Each layer appears once you zoom in to its level (Z1 is the furthest out, Z7 the closest). Change the level to see a layer sooner or later.</p>
+        <div class="feature-layers" id="feature-layers"></div>
+      </div>
+      <div class="group">
+        <h3>Legend</h3>
+        <div id="legend" class="legend"><p class="hint">Open a seed to see what is in view.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- About -->
+  <section class="pane" data-pane="about" hidden>
+    <div class="pane-head">
+      <h2>About this map</h2>
+      <p>Built from your installed snapshot. Nothing is sent anywhere.</p>
+    </div>
+    <div class="pane-body prose">
+      <div class="group">
+        <h3>How accurate is it?</h3>
+        <ul>
+          <li><b>Found worlds</b>: structures are checked with Minecraft’s own generator and each reported one is fully built to confirm it. Coordinates are the locate position; Y is the bounding-box minimum.</li>
+          <li><b>Structure layers</b> on the map use the same check the game’s <code>/locate</code> uses. Click a marker to build that structure and see its footprint.</li>
+          <li><b>Biomes</b> are sampled every 32 blocks, then terrain height and biome boundaries are checked. Small patches may be missed.</li>
+          <li><b>The map</b> is base terrain: trees, structures, decorations and later terrain changes are not drawn.</li>
+          <li><b>Spawn</b> is the generator’s starting region, so the final player position can shift.</li>
+          <li>Default vanilla Overworld only. Custom world-generation datapacks are not included.</li>
+        </ul>
+      </div>
+      <div class="group">
+        <h3>Map shortcuts</h3>
+        <dl class="keys">
+          <dt><kbd>Drag</kbd></dt><dd>Pan the map</dd>
+          <dt><kbd>Scroll</kbd> <kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom</dd>
+          <dt><kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd></dt><dd>Pan by keyboard</dd>
+          <dt><kbd>Click</kbd></dt><dd>Inspect a chunk or marker</dd>
+          <dt><kbd>G</kbd></dt><dd>Go to coordinates or find the nearest feature</dd>
+          <dt><kbd>H</kbd></dt><dd>Back to spawn</dd>
+          <dt><kbd>M</kbd></dt><dd>Measure distance</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Close inspector or stop measuring</dd>
+        </dl>
+      </div>
+      <p class="hint">Local search. No world saves are opened or modified.</p>
+    </div>
+  </section>
+</aside>
+
+<main class="stage" id="stage">
+  <div id="map" class="map-host"></div>
+
+  <div class="map-empty" id="map-empty">
+    <div class="empty-card">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 16l16-6 16 6 16-6v38l-16 6-16-6-16 6z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M24 10v38M40 16v38" stroke="currentColor" stroke-width="2.5"/><circle cx="32" cy="30" r="4" fill="var(--accent)"/></svg>
+      <h3>A good world is out there.</h3>
+      <p>Choose features on the left and start a search,<br>or open any seed from the bar above.</p>
+    </div>
+  </div>
+
+  <div class="seed-chip" id="seed-chip" hidden>
+    <span class="overline">Seed</span><code id="chip-seed"></code>
+    <button class="icon-btn" id="chip-copy" title="Copy seed" aria-label="Copy seed"><span data-icon="copy"></span></button>
+    <button class="icon-btn" id="chip-save" title="Save this seed with notes" aria-label="Save this seed with notes"><span data-icon="bookmark"></span></button>
+  </div>
+
+  <div class="measure-bar" id="measure-bar" hidden><span data-icon="ruler"></span><span id="measure-text">Click two points to measure.</span><button class="icon-btn" id="measure-close" aria-label="Stop measuring"><span data-icon="x"></span></button></div>
+
+  <aside class="inspector" id="inspector" hidden aria-live="polite"></aside>
+
+  <div class="goto" id="goto" hidden>
+    <div class="goto-head"><h4>Go to</h4><button class="icon-btn" id="goto-close" aria-label="Close"><span data-icon="x"></span></button></div>
+    <form class="goto-row" id="goto-form">
+      <label class="field"><span>X</span><input id="map-x" type="number" step="1"></label>
+      <label class="field"><span>Z</span><input id="map-z" type="number" step="1"></label>
+      <button class="btn" type="submit">Go</button>
+    </form>
+    <form class="goto-row" id="nearest-form">
+      <label class="field"><span>Nearest to the map centre</span><select id="nearest-feature" aria-label="Feature to find"></select></label>
+      <button class="btn primary" type="submit" id="nearest-go">Find</button>
+    </form>
+    <p class="notice" id="nearest-status" role="status"></p>
+  </div>
+
+  <div class="map-tools" id="map-tools" hidden>
+    <div class="tool-group">
+      <button id="tool-goto" title="Go to coordinates or find the nearest feature (G)" aria-label="Go to"><span data-icon="crosshair"></span></button>
+      <button id="tool-measure" title="Measure distance (M)" aria-label="Measure distance"><span data-icon="ruler"></span></button>
+      <button id="tool-layers" title="Layers" aria-label="Layers"><span data-icon="layers"></span></button>
+    </div>
+    <div class="tool-group">
+      <button id="tool-fit" title="Show spawn and search matches" aria-label="Show spawn and search matches"><span data-icon="frame"></span></button>
+      <button id="tool-home" title="Center on spawn (H)" aria-label="Center on spawn"><span data-icon="home"></span></button>
+    </div>
+    <div class="tool-group">
+      <button id="zoom-in" title="Zoom in (+)" aria-label="Zoom in"><span data-icon="plus"></span></button>
+      <button id="zoom-out" title="Zoom out (−)" aria-label="Zoom out"><span data-icon="minus"></span></button>
+    </div>
+  </div>
+
+  <div class="scale" id="scale" hidden><span class="north" title="North is up"><span data-icon="north"></span>N</span><div class="scale-bar"><i id="scale-line"></i><span id="scale-text"></span></div></div>
+  <div class="map-tip" id="map-tip" hidden></div>
+  <div class="tile-progress" id="tile-progress" hidden><i></i></div>
+</main>
+
+<footer class="statusbar">
+  <span id="status-cursor" class="status-main">Local search · no world saves touched</span>
+  <span class="status-end"><span id="status-zoom"></span><span id="status-tiles"></span></span>
+</footer>
+
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<dialog class="subcategory-dialog" id="subcategory-dialog" aria-labelledby="subcategory-title">
+  <div class="subcategory-head"><h3 id="subcategory-title"></h3><button type="button" class="icon-btn" id="subcategory-close" aria-label="Close subcategories"><span data-icon="x"></span></button></div>
+  <p class="hint" id="subcategory-hint"></p>
+  <div id="subcategory-options"></div>
+  <div class="subcategory-footer"><button type="button" class="btn primary" id="subcategory-done">Done</button></div>
+</dialog>
+<script src="/terrain.js"></script>
+<script src="/map.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

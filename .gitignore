@@ -4,3 +4,6 @@ __pycache__/
 settings.local.json
 
 logs/
+saved-seeds.json
+saved-seeds.tmp
+catalogue.db

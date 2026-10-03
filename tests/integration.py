@@ -1,5 +1,6 @@
 """Exercise the running app against the installed snapshot (no world saves)."""
-import json, time, unittest, urllib.request, urllib.error
+import json, pathlib, sys, time, unittest, urllib.request, urllib.error
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 BASE="http://127.0.0.1:8877"
 def api(path, data=None):
     req=urllib.request.Request(BASE+path, data=None if data is None else json.dumps(data).encode(), headers={"Content-Type":"application/json"})
@@ -21,6 +22,8 @@ class SnapshotTests(unittest.TestCase):
         self.assertTrue(r["match"])
         coords={f["key"]:(f["x"],f["z"]) for f in r["features"]}
         self.assertEqual(coords,{"villages":(-288,272),"trial_chambers":(224,176)})
+        # Reported structures come from the second pass, which builds the start.
+        self.assertEqual({f["confidence"] for f in r["features"]},{"Snapshot structure start confirmed"})
         self.assertEqual(r,api("/api/inspect",{"seed":"123","features":[{"kind":"structure","key":"villages","radius":1000},{"kind":"structure","key":"trial_chambers","radius":1000}]}))
     def test_custom_origin_and_biome(self):
         r=api("/api/inspect",{"seed":"-9223372036854775808","anchor":"custom","x":-300,"z":400,"features":[{"kind":"biome","key":"plains","radius":1500}]})
@@ -72,8 +75,260 @@ class SnapshotTests(unittest.TestCase):
         opened=api('/api/open',{'seed':'-9223372036854775808','x':0,'z':0})
         self.assertEqual(opened['seed'],'-9223372036854775808')
         self.assertEqual(opened['features'],[])
+    def test_biome_modes_and_worker_limits(self):
+        base={"seed":"18","features":[{"kind":"biome","key":"cherry_grove","radius":1000}]}
+        quick=api("/api/inspect",base);full=api("/api/inspect",{**base,"biomeMode":"exhaustive"})
+        self.assertTrue(quick["match"]);self.assertTrue(full["match"])
+        # The prefilter only skips samples, so it can never report a nearer point than the exhaustive scan.
+        self.assertGreaterEqual(quick["features"][0]["distance"],full["features"][0]["distance"])
+        c=api("/api/status")["catalog"]
+        self.assertIn(c["mapWorkers"],range(2,9))
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            api("/api/start",{"seed":"0","threads":max(8,c["cores"])+1,"limit":1,"features":[{"kind":"structure","key":"villages","radius":1000}]})
+        self.assertEqual(e.exception.code,400)
+    def test_conditions_measured_from_another_match(self):
+        village=lambda **extra:{"kind":"structure","key":"villages","radius":1000,"id":"v",**extra}
+        chamber=lambda radius,**extra:{"kind":"structure","key":"trial_chambers","radius":radius,"near":"v",**extra}
+        inspect=lambda *features:api("/api/inspect",{"seed":"123","features":list(features)})
+        spots=lambda result:[(f["key"],f["x"],f["z"],f["distance"],(f["near"]["x"],f["near"]["z"]) if "near" in f else None) for f in result["features"]]
+        # The nearest village has no trial chamber within 200 blocks of it, so the second village is the one that qualifies.
+        self.assertEqual(spots(inspect(village(),chamber(200))),[("villages",-224,544,584,None),("trial_chambers",-272,672,137,(-224,544))])
+        self.assertEqual(spots(inspect(village(),chamber(300))),[("villages",-288,272,397,None),("trial_chambers",-528,160,265,(-288,272))])
+        both=inspect(village(count=2),chamber(600))
+        self.assertEqual(spots(both),[("villages",-288,272,397,None),("trial_chambers",-528,160,265,(-288,272)),("villages",-224,544,584,None),("trial_chambers",-272,672,137,(-224,544))])
+        self.assertEqual({f["confidence"] for f in both["features"]},{"Snapshot structure start confirmed"})
+        # Every village within 1,000 blocks has a trial chamber within 600 of it.
+        self.assertFalse(inspect(village(),chamber(600,mode="exclude"))["match"])
+        # A condition on the anchor's own type does not count the anchor itself.
+        self.assertEqual(spots(inspect(village(),{"kind":"structure","key":"villages","radius":400,"near":"v"}))[1],("villages",-224,544,279,(-288,272)))
+        biome=spots(inspect(village(),{"kind":"biome","key":"snowy_plains","radius":200,"near":"v"}))
+        self.assertEqual(biome[0][:3],("villages",400,784));self.assertEqual(biome[1][4],(400,784))
+        # Without ids the same request behaves as before.
+        plain=inspect({"kind":"structure","key":"villages","radius":1000},{"kind":"structure","key":"trial_chambers","radius":1000})
+        self.assertEqual([(f["x"],f["z"]) for f in plain["features"]],[(-288,272),(224,176)])
+        for bad in ([{"kind":"biome","key":"taiga","radius":500,"id":"v"},chamber(300)],[village(mode="exclude"),chamber(300)],
+                    [village(),chamber(300,id="c"),{"kind":"structure","key":"igloos","radius":300,"near":"c"}],[{"kind":"structure","key":"villages","radius":500},chamber(300)]):
+            with self.assertRaises(urllib.error.HTTPError) as e: api("/api/inspect",{"seed":"123","features":bad})
+            self.assertEqual(e.exception.code,400)
+    def test_saved_seeds_keep_notes(self):
+        # Uses its own seed and removes it again, so seeds the user saved are left alone.
+        seed="-777000111222333";before=[s for s in api("/api/saved")["seeds"] if s["seed"]!=seed]
+        result=api("/api/open",{"seed":seed,"x":0,"z":0})
+        try:
+            saved=api("/api/saved",{"seed":seed,"result":result,"view":{"x":120.5,"z":-64,"bpp":2}})["seeds"]
+            self.assertEqual(saved[0]["seed"],seed);self.assertEqual(saved[0]["note"],"");self.assertEqual(saved[1:],before)
+            api("/api/saved",{"seed":seed,"note":"Build by the river"})
+            entry=api("/api/saved")["seeds"][0]
+            self.assertEqual((entry["note"],entry["view"],entry["result"]),("Build by the river",{"x":120.5,"z":-64.0,"bpp":2.0},result))
+            with self.assertRaises(urllib.error.HTTPError) as e: api("/api/saved",{"seed":seed,"note":"x"*4001})
+            self.assertEqual(e.exception.code,400)
+        finally:
+            self.assertEqual(api("/api/saved-delete",{"seed":seed})["seeds"],before)
+    def test_rare_finds_are_catalogued_and_reused(self):
+        # Works on finds it creates and removes them again, so the user's own catalogue is left as it was.
+        catalogue=lambda:api("/api/catalogue")["finds"];before={f["id"] for f in catalogue()}
+        mine=lambda:[f for f in catalogue() if f["id"] not in before]
+        rare=[{"kind":"structure","key":"woodland_mansions","radius":800},{"kind":"structure","key":"villages","radius":300}]
+        def run(**request):
+            api("/api/start",{"threads":8,"maxMatches":50,"rareThreshold":100,**request});return stopped()
+        try:
+            first=run(seed="9000000",limit=6000,features=rare,useCatalogue=False)
+            self.assertEqual((first["tested"],first["matches"]),(6000,22))
+            self.assertEqual([(f["tested"],f["matches"],f["seedsPerMatch"],len(f["seeds"]),f["imported"]) for f in mine()],[(6000,22,273,22,False)])
+            # The same conditions from another starting seed: every catalogued seed comes back before any new seed is tried.
+            again=run(seed="9500000",limit=1000,features=rare)
+            reused={r["seed"] for r in again["results"] if r.get("fromCatalogue")}
+            self.assertTrue({r["seed"] for r in first["results"]}<=reused);self.assertGreaterEqual(again["catalogueChecked"],22)
+            self.assertEqual({r["seed"] for r in again["results"] if not r.get("fromCatalogue")},{"9500561","9500902"})
+            self.assertEqual([(f["tested"],f["matches"],f["seedsPerMatch"],len(f["seeds"])) for f in mine()],[(7000,24,292,24)])
+            # A looser search is answered from the catalogue without trying a single new seed.
+            looser=run(seed="9700000",limit=50,maxMatches=3,features=[{"kind":"structure","key":"woodland_mansions","radius":2000}],rareThreshold=100000)
+            self.assertEqual((looser["tested"],looser["matches"]),(0,3));self.assertTrue(all(r["fromCatalogue"] for r in looser["results"]))
+            # A common combination is not kept, and with the catalogue switched off none of its seeds are used.
+            common=run(seed="9800000",limit=40,maxMatches=5,features=[{"kind":"structure","key":"villages","radius":1000}],useCatalogue=False)
+            self.assertFalse(any(r.get("fromCatalogue") for r in common["results"]));self.assertEqual(len(mine()),1)
+            # Export, remove, import: seeds are re-checked, so an invented seed and another game version are dropped.
+            signature=json.dumps(mine()[0]["conditions"],sort_keys=True)
+            exported=json.load(urllib.request.urlopen(BASE+"/api/catalogue-export",timeout=30))
+            entry=next(f for f in exported["finds"] if json.dumps(f["conditions"],sort_keys=True)==signature)
+            self.assertEqual((exported["format"],len(entry["seeds"])),("seed-scout-catalogue",24))
+            api("/api/catalogue-delete",{"id":mine()[0]["id"]});self.assertEqual(mine(),[])
+            tampered={**entry,"seeds":entry["seeds"]+["424242424242"]}
+            summary=api("/api/catalogue-import",{"format":"seed-scout-catalogue","formatVersion":1,"finds":[tampered,{**tampered,"version":"1.0-other"}]})
+            self.assertEqual(summary,{"finds":1,"seeds":24,"rejected":1,"otherVersion":1})
+            self.assertEqual([(f["tested"],f["matches"],len(f["seeds"]),f["imported"]) for f in mine()],[(7000,24,24,True)])
+            with self.assertRaises(urllib.error.HTTPError) as e: api("/api/catalogue-import",{"format":"something-else"})
+            self.assertEqual(e.exception.code,400)
+        finally:
+            for f in mine(): api("/api/catalogue-delete",{"id":f["id"]})
     def test_reject_invalid_radius(self):
         with self.assertRaises(urllib.error.HTTPError) as e:
             api("/api/inspect",{"seed":"0","features":[{"kind":"structure","key":"villages","radius":9000}]})
         self.assertEqual(e.exception.code,400)
+    def rejected(self,path,data):
+        with self.assertRaises(urllib.error.HTTPError) as e: api(path,data)
+        self.assertEqual(e.exception.code,400)
+    def test_structure_tiles(self):
+        tile=lambda x,z,size,keys=("villages",):api("/api/structures",{"seed":"123","x":x,"z":z,"size":size,"keys":list(keys)})
+        quadrants=[tile(x,z,2048) for x in (-2048,0) for z in (-2048,0)]
+        villages=[(f["x"],f["z"]) for q in quadrants for f in q["features"]]
+        self.assertEqual(villages.count((-288,272)),1)
+        self.assertEqual(len(set(villages)),len(villages))
+        for q in quadrants:
+            self.assertEqual(q["limited"],[])
+            # A tile owns the locate positions in its half-open square, so neighbours never share one.
+            self.assertTrue(all(q["x"]<=f["x"]<q["x"]+2048 and q["z"]<=f["z"]<q["z"]+2048 for f in q["features"]))
+        self.assertIn({"kind":"structure","key":"villages","detail":"village_taiga","x":-288,"y":49,"z":272,"confidence":"Snapshot generation point confirmed"},quadrants[1]["features"])
+        wide=[(f["x"],f["z"]) for x in (-4096,0) for z in (-4096,0) for f in tile(x,z,4096)["features"]]
+        self.assertEqual(len(set(wide)),len(wide))
+        self.assertEqual(sorted(v for v in wide if -2048<=v[0]<2048 and -2048<=v[1]<2048),sorted(villages))
+        both=tile(0,0,4096,("villages","strongholds"))
+        self.assertEqual(sorted((f["x"],f["z"]) for f in both["features"] if f["key"]=="villages"),sorted(v for v in wide if v[0]>=0 and v[1]>=0))
+        self.assertEqual(both,tile(0,0,4096,("strongholds","villages")))
+        for bad in ({"size":3000},{"x":1024},{"z":-100},{"x":30000128,"size":1024},{"keys":[]},{"keys":["villages","villages"]},{"keys":["fortresses"]},{"keys":"villages"},{"seed":"9223372036854775808"}):
+            self.rejected("/api/structures",{"seed":"123","x":0,"z":0,"size":4096,"keys":["villages"],**bad})
+    def test_ruined_portal_placements(self):
+        placements=('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground')
+        keys=['ruined_portals']+['ruined_portals_'+p for p in placements]
+        self.assertTrue(set(keys)<=set(api('/api/status')['catalog']['sets']))
+        groups={key:api('/api/structures',{'seed':'123','x':0,'z':0,'size':4096,'keys':[key]})['features'] for key in keys}
+        coords=lambda key:{(f['x'],f['z']) for f in groups[key]}
+        seen=set()
+        for key in keys[1:]:
+            self.assertFalse(seen & coords(key))
+            seen |= coords(key)
+            for f in groups[key][:1]:
+                x,z=f['x'],f['z']
+                for option in keys[1:]:
+                    expected=option==key
+                    self.assertEqual(api('/api/structure',{'seed':'123','key':option,'x':x,'z':z})['valid'],expected)
+                    request={'seed':'123','anchor':'custom','x':x,'z':z,'features':[{'kind':'structure','key':option,'radius':32}]}
+                    self.assertEqual(api('/api/inspect',request)['match'],expected)
+                    request['features'][0]['mode']='exclude'
+                    self.assertEqual(api('/api/inspect',request)['match'],not expected)
+        self.assertEqual(seen,coords(keys[0]))
+        self.assertEqual(len(seen),42)
+        # The smaller tile has no desert or mountain portals; exercise those placements explicitly.
+        for placement,x,z in (('partly_buried',4128,7840),('in_mountain',256,4480)):
+            key='ruined_portals_'+placement
+            self.assertTrue(api('/api/structure',{'seed':'123','key':key,'x':x,'z':z})['valid'])
+            self.assertTrue(api('/api/inspect',{'seed':'123','anchor':'custom','x':x,'z':z,'features':[{'kind':'structure','key':key,'radius':32}]})['match'])
+            for other in keys[1:]:
+                if other!=key:self.assertFalse(api('/api/structure',{'seed':'123','key':other,'x':x,'z':z})['valid'])
+
+    def test_family_filter_alternatives(self):
+        catalog=api('/api/status')['catalog']
+        variants=[catalog['variantDetails'][k] for k in catalog['structureVariants']['ruined_portals']]
+        inspect=lambda seed,**filters:api('/api/inspect',{'seed':seed,'features':[{'kind':'structure','key':'ruined_portals','radius':40,**filters}]})
+        # All biome choices are a wildcard, rather than requiring six different nearby portals.
+        land='-465718846310429368'
+        plain=inspect(land,placements=['on_land_surface'])
+        self.assertTrue(plain['match'])
+        self.assertEqual(plain,inspect(land,variants=variants,placements=['on_land_surface']))
+        hit=plain['features'][0]
+        self.assertEqual((hit['x'],hit['z'],hit['detail']),(0,0,'ruined_portal'))
+        self.assertTrue(inspect(land,variants=['ruined_portal_desert',hit['detail']],placements=['on_ocean_floor','on_land_surface'])['match'])
+        self.assertFalse(inspect(land,variants=['ruined_portal_desert'],placements=['on_land_surface'])['match'])
+        self.assertFalse(inspect(land,variants=[hit['detail']],placements=['on_ocean_floor'])['match'])
+        self.assertFalse(inspect(land,placements=['on_land_surface'],count=2)['match'])
+        self.assertFalse(inspect(land,placements=['on_land_surface'],mode='exclude')['match'])
+        self.assertTrue(inspect(land,variants=['ruined_portal_desert'],placements=['on_land_surface'],mode='exclude')['match'])
+        # The user's above-ground swamp portal uses Minecraft's ON_OCEAN_FLOOR generation type.
+        swamp='-465718846310429394'
+        self.assertTrue(inspect(swamp,variants=variants,placements=['on_ocean_floor'])['match'])
+        self.assertFalse(inspect(swamp,variants=variants,placements=['on_land_surface'])['match'])
+        for filters in ({'variants':[]},{'placements':[]},{'variants':'ruined_portal'},
+                        {'variants':['not_a_variant']},{'placements':['in_nether']},
+                        {'placements':['on_land_surface'],'key':'villages'},
+                        {'variants':['plains'],'key':'plains','kind':'biome'}):
+            self.rejected('/api/inspect',{'seed':land,'features':[{'kind':'structure','key':'ruined_portals','radius':40,**filters}]})
+
+    def test_family_filter_catalogue_identity(self):
+        from app import Engine, conditions
+        engine=Engine.__new__(Engine);engine.catalog=api('/api/status')['catalog']
+        variants=[engine.catalog['variantDetails'][k] for k in engine.catalog['structureVariants']['ruined_portals']]
+        def identity(**filters):
+            request={'seed':'123','features':[{'kind':'structure','key':'ruined_portals','radius':40,**filters}]}
+            return conditions(engine.validate(request))
+        self.assertEqual(identity(),identity(variants=variants))
+        self.assertNotEqual(identity(),identity(placements=['on_land_surface']))
+        self.assertNotEqual(identity(placements=['on_land_surface']),identity(placements=['on_ocean_floor']))
+        self.assertEqual(identity(variants=['ruined_portal','ruined_portal_swamp']),
+                         identity(variants=['ruined_portal_swamp','ruined_portal','ruined_portal']))
+        self.assertNotEqual(identity(variants=['ruined_portal']),identity(variants=['ruined_portal_swamp']))
+
+    def test_structure_subcategories(self):
+        catalog=api('/api/status')['catalog']
+        expected={'villages':5,'mineshafts':2,'ocean_ruins':2,'shipwrecks':2,'abandoned_camp':18,'ruined_portals':6}
+        self.assertEqual({k:len(v) for k,v in catalog['structureVariants'].items()},expected)
+        for family,keys in catalog['structureVariants'].items():
+            def tile(key):return api('/api/structures',{'seed':'123','x':0,'z':0,'size':2048,'keys':[key]})['features']
+            base=tile(family);seen=set()
+            for key in keys:
+                variants=tile(key)
+                self.assertTrue(all(f['detail']==catalog['variantDetails'][key] for f in variants))
+                positions={(f['x'],f['z']) for f in variants}
+                self.assertFalse(seen & positions);seen |= positions
+                if variants:
+                    f=variants[0];x,z=f['x'],f['z']
+                    self.assertTrue(api('/api/structure',{'seed':'123','key':key,'x':x,'z':z})['valid'])
+                    self.assertTrue(api('/api/inspect',{'seed':'123','anchor':'custom','x':x,'z':z,'features':[{'kind':'structure','key':key,'radius':32}]})['match'])
+                    other=next(k for k in keys if k!=key)
+                    self.assertFalse(api('/api/structure',{'seed':'123','key':other,'x':x,'z':z})['valid'])
+            self.assertEqual(seen,{(f['x'],f['z']) for f in base})
+            if family=='ruined_portals':self.assertTrue(all(f['placement'] in ('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground') for f in base))
+
+    def test_structure_confirmation(self):
+        confirmed=api("/api/structure",{"seed":"123","key":"villages","x":-288,"z":272})
+        inspected=api("/api/inspect",{"seed":"123","features":[{"kind":"structure","key":"villages","radius":1000}]})["features"][0]
+        self.assertEqual({k:confirmed[k] for k in ("valid","kind","key","detail","x","y","z","confidence")},{"valid":True,**{k:inspected[k] for k in ("kind","key","detail","x","y","z","confidence")}})
+        self.assertEqual(confirmed["box"],{"minX":-369,"minY":16,"minZ":190,"maxX":-238,"maxY":100,"maxZ":320})
+        self.assertEqual(confirmed["pieces"],134)
+        # One chunk east of the village there is no start.
+        self.assertEqual(api("/api/structure",{"seed":"123","key":"villages","x":-272,"z":272}),{"valid":False})
+        for bad in ({"key":"fortresses"},{"x":"west"},{"z":30100000},{"seed":""}):
+            self.rejected("/api/structure",{"seed":"123","key":"villages","x":-288,"z":272,**bad})
+    def test_count_min_radius_and_exclude(self):
+        village=lambda **extra:{"kind":"structure","key":"villages","radius":1000,**extra}
+        inspect=lambda *features,seed="123",**extra:api("/api/inspect",{"seed":seed,"features":list(features),**extra})
+        spots=lambda result:[(f["x"],f["z"],f["distance"]) for f in result["features"]]
+        three=inspect(village(count=3))
+        self.assertEqual(spots(three),[(-288,272,397),(-224,544,584),(400,784,869)])
+        self.assertEqual({f["confidence"] for f in three["features"]},{"Snapshot structure start confirmed"})
+        self.assertFalse(inspect(village(count=4,radius=900))["match"])
+        self.assertEqual(spots(inspect(village(minRadius=500))),[(-224,544,584)])
+        self.assertFalse(inspect(village(minRadius=600,radius=800))["match"])
+        self.assertEqual(inspect(village()),inspect(village(mode="within",minRadius=0,count=1)))
+        # The two outermost of the three villages are 858 blocks apart.
+        self.assertFalse(inspect(village(count=3),cluster=800)["match"])
+        self.assertTrue(inspect(village(count=3),cluster=900)["match"])
+        # Seed 123 has a trial chamber 274 blocks from spawn.
+        chamber=lambda radius:{"kind":"structure","key":"trial_chambers","radius":radius,"mode":"exclude"}
+        self.assertEqual(spots(inspect(village(),chamber(200))),[(-288,272,397)])
+        self.assertFalse(inspect(village(),chamber(300))["match"])
+        only=inspect(chamber(200))
+        self.assertTrue(only["match"]);self.assertEqual(only["features"],[])
+        # Snowy plains lie 258 blocks from spawn; there are no plains within 500.
+        biome=lambda key,**extra:{"kind":"biome","key":key,"radius":500,**extra}
+        self.assertEqual(spots(inspect(village(),biome("plains",mode="exclude"))),[(-288,272,397)])
+        self.assertFalse(inspect(village(),biome("snowy_plains",mode="exclude"))["match"])
+        self.assertEqual(spots(inspect(biome("snowy_plains"))),[(-120,-216,258)])
+        # Seed 18 has a cherry grove 64 blocks from spawn; the nearest one beyond 600 blocks is 890 away.
+        grove=lambda **extra:{"kind":"biome","key":"cherry_grove","radius":1000,**extra}
+        self.assertEqual(spots(inspect(grove(minRadius=600),seed="18")),[(472,856,890)])
+        self.assertFalse(inspect(grove(minRadius=600,radius=880),seed="18")["match"])
+    def test_search_with_count_and_exclude(self):
+        features=[{"kind":"structure","key":"villages","radius":800,"count":2},{"kind":"structure","key":"pillager_outposts","radius":800,"mode":"exclude"}]
+        api("/api/start",{"seed":"0","threads":4,"limit":60,"maxMatches":100,"features":features});s=stopped()
+        self.assertEqual(sorted(int(r["seed"]) for r in s["results"]),[2,4,5,12,13,17,19,25,26,27,28,34,35,39,44,45,46,48,51,52,53,57,59])
+        for r in s["results"]:
+            self.assertEqual([f["key"] for f in r["features"]],["villages","villages"])
+            self.assertLessEqual(r["features"][0]["distance"],r["features"][1]["distance"])
+            self.assertEqual(r["features"],api("/api/inspect",{"seed":r["seed"],"features":features})["features"])
+    def test_reject_invalid_conditions(self):
+        village=lambda **extra:{"kind":"structure","key":"villages","radius":500,**extra}
+        self.assertIn("match",api("/api/inspect",{"seed":"0","features":[village(minRadius=468,count=10),village(mode="exclude",radius=100)]}))
+        for bad in (village(mode="near"),village(minRadius=-1),village(minRadius=469),village(count=0),village(count=11),village(mode="exclude",count=2),village(mode="exclude",minRadius=100),{"kind":"biome","key":"plains","radius":500,"count":2}):
+            self.rejected("/api/inspect",{"seed":"0","features":[bad]})
+            self.rejected("/api/start",{"seed":"0","limit":1,"features":[bad]})
 if __name__=="__main__":unittest.main(verbosity=2)
