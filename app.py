@@ -116,6 +116,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(data)
         if self.path=='/api/export':
             with self.server.engine.lock: return self.reply(self.server.engine.state)
+        if self.path=='/api/export-file':
+            target=ROOT/'runtime/exported-results.json'
+            if not target.exists(): return self.reply({'error':'Export results first'},404)
+            raw=target.read_bytes();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Disposition','attachment; filename=seed-scout-results.json');self.end_headers();self.wfile.write(raw);return
         files={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}
         if self.path not in files: return self.reply({'error':'Not found'},404)
         path=ROOT/'web'/files[self.path];raw=path.read_bytes()
@@ -130,6 +134,12 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/start': result=self.server.engine.start(request)
             elif self.path=='/api/stop': self.server.engine.send({'cmd':'stop'});result={'ok':True}
             elif self.path=='/api/inspect': result=self.server.engine.inspect(request)
+            elif self.path=='/api/export':
+                target=ROOT/'runtime/exported-results.json'
+                with self.server.engine.lock: exported=copy.deepcopy(self.server.engine.state)
+                exported['results']=request.get('results',exported['results'])
+                target.write_text(json.dumps(exported,indent=2),encoding='utf-8')
+                result={'saved':str(target),'url':'/api/export-file'}
             elif self.path=='/api/shutdown': self.reply({'ok':True});threading.Thread(target=self.server.shutdown,daemon=True).start();return
             else: return self.reply({'error':'Not found'},404)
             self.reply(result)

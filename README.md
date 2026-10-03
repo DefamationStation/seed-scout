@@ -14,7 +14,7 @@ and a maximum distance between feature matches. Blank starting seed chooses a ra
 Stop waits for active checks; Resume starts at the earliest unfinished seed, potentially repeating
 some completed checks rather than skipping any. Results persist in runtime/last-search.json.
 The **Check** field checks an existing numeric seed against your current selection.
-Export saves JSON including feature coordinates. Hover map markers for X/Y/Z and confidence.
+Export saves JSON including feature coordinates to runtime/exported-results.json and offers a browser download. Hover map markers for X/Y/Z and confidence.
 Close app stops the local backend; closing only the browser leaves it available for another visit.
 
 ## Accuracy
