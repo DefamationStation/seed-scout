@@ -1,0 +1,5 @@
+runtime/
+__pycache__/
+*.log
+settings.local.json
+

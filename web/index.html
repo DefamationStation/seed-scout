@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Seed Scout</title><link rel="stylesheet" href="/style.css"></head>
+<body><main>
+<header><a class="brand" href="/"><span class="brand-icon">▦</span> Seed Scout</a><div class="version"><i></i> Java 26.4 Snapshot 2</div><button id="quit" class="quiet">Close app</button></header>
+<section class="intro"><span class="eyebrow">A BETTER PLACE TO BEGIN</span><h1>Find your next world.</h1><p>Pick what you want nearby. Let your snapshot find the seed.</p></section>
+<div class="workspace"><section class="panel controls">
+<div class="section-heading"><h2>Your ideal starting area</h2><span id="selection-count" class="tag">0 selected</span></div>
+<div class="presets"><button data-preset="starter">Village + cherry grove</button><button data-preset="island">Village + mushroom fields</button><button data-preset="adventure">Village + trial chamber</button></div>
+<div class="settings-grid"><label>Search around<select id="anchor"><option value="spawn">Spawn region</option><option value="custom">Specific coordinates</option></select></label><label>Default distance <span class="units">blocks</span><input id="radius" type="number" min="32" max="8000" step="100" value="1000"></label></div>
+<div id="coordinates" class="settings-grid" hidden><label>X<input id="x" type="number" value="0"></label><label>Z<input id="z" type="number" value="0"></label></div>
+<div class="feature-toolbar"><div class="tabs"><button class="active" data-kind="structure">Structures</button><button data-kind="biome">Biomes</button></div><input id="filter" type="search" placeholder="Find a feature…" aria-label="Filter features"></div>
+<div id="features" class="feature-list"><div class="loading">Starting the snapshot engine…</div></div>
+<div id="chosen" class="chosen"></div>
+<details><summary>Search controls <span>workers, starting seed, clustering</span></summary>
+<div class="settings-grid"><label>Parallel workers<select id="threads"><option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option></select></label><label>Results to find<input id="maxMatches" type="number" min="1" max="100" value="10"></label></div>
+<label>Starting seed <span class="units">blank = random</span><input id="seed" type="text" inputmode="numeric" placeholder="Random 64-bit seed"></label>
+<div class="settings-grid"><label>Seed search budget<input id="limit" type="number" min="1" max="10000000" value="100000"></label><label>Max gap between matches <span class="units">0 = off</span><input id="cluster" type="number" min="0" max="16000" value="0"></label></div>
+<p class="hint">Clustering checks the nearest matches found. It can miss a different valid grouping.</p>
+</details>
+<div class="actions"><button id="start" class="primary" disabled>Start searching <span>→</span></button><button id="stop" class="secondary" hidden>Stop search</button><button id="resume" class="secondary" hidden>Resume</button></div>
+<div class="check-seed"><input id="inspect-seed" placeholder="Already have a seed? Check it here" aria-label="Seed to check"><button id="inspect" disabled>Check</button></div>
+<p id="notice" class="notice" role="status">Loading the installed Minecraft generation code.</p>
+</section>
+<section class="results-area">
+<div class="stats"><div><strong id="tested">0</strong><span>seeds checked</span></div><div><strong id="rate">—</strong><span>seeds / second</span></div><div><strong id="matches">0</strong><span>matches found</span></div><span id="search-status" class="status">Starting engine</span></div>
+<div class="panel map-panel"><div class="section-heading"><h2 id="map-title">Your future neighbourhood</h2><span id="map-scale" class="tag">Feature positions</span></div><div id="map" class="map-empty"><div class="empty-icon">⌖</div><h3>A good world is out there.</h3><p>Search for a seed, then select a result<br>to see where everything is.</p></div><div class="map-footer"><span><i class="legend-anchor"></i> Search centre</span><span><i class="legend-feature"></i> Selected features</span><span>Position map · no terrain preview</span></div></div>
+<div class="section-heading result-heading"><h2>Found worlds</h2><button id="export" class="quiet">Export results ↓</button></div><div id="results" class="result-list"><p class="empty-results">Matching seeds will appear here as they’re found.</p></div>
+<aside class="accuracy"><strong>Built for your snapshot</strong><p>Structure starts are checked with Minecraft’s own generator. Biomes use a 32-block noise-biome scan; small patches may be missed. Spawn is the generator’s starting region, so the final player position can shift. Default vanilla worlds only; custom generation datapacks are not included.</p></aside>
+</section></div><footer>Local search. No world saves touched. <span>Seed Scout / 26.4 Snapshot 2</span></footer>
+</main><script src="/app.js"></script></body></html>
