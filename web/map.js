@@ -4,6 +4,7 @@ const worldMap=(()=>{
   const discoveries=new Map();
   const markers=()=>[...(result?.features||[]),...(discoveries.get(result?.seed)||[])].filter((f,i,a)=>a.findIndex(v=>v.kind===f.kind&&v.key===f.key&&v.x===f.x&&v.z===f.z)===i);
   const cache=new Map(),pending=new Set(),failed=new Map();
+  const resizeWatch=new ResizeObserver(()=>resize());
   const colours={plains:'#83b75d',sunflower_plains:'#9fbf55',forest:'#447c40',flower_forest:'#608c53',birch_forest:'#69a057',old_growth_birch_forest:'#61914a',dark_forest:'#355039',pale_garden:'#8b9381',cherry_grove:'#d29eac',meadow:'#a3b86a',grove:'#82917f',taiga:'#688666',old_growth_pine_taiga:'#5e7960',old_growth_spruce_taiga:'#58745b',snowy_taiga:'#bbcabb',snowy_plains:'#d7e4df',snowy_slopes:'#c8d8d3',frozen_peaks:'#e4e8e5',jagged_peaks:'#a6aaa3',stony_peaks:'#a5aa88',desert:'#d9c587',beach:'#dccd9b',snowy_beach:'#d6dccd',stony_shore:'#a9aba0',badlands:'#bc7351',eroded_badlands:'#c68857',wooded_badlands:'#a57d46',savanna:'#b3b06b',savanna_plateau:'#a9a163',jungle:'#408548',bamboo_jungle:'#528d42',sparse_jungle:'#70a44f',swamp:'#68764d',mangrove_swamp:'#506549',mushroom_fields:'#af789d',dappled_forest:'#69825b',river:'#477fa4',ocean:'#326795',deep_ocean:'#254a76',cold_ocean:'#437c97',deep_cold_ocean:'#315c7b',frozen_ocean:'#95b6bf',deep_frozen_ocean:'#537e94',lukewarm_ocean:'#3a8a9f',deep_lukewarm_ocean:'#2c708b',warm_ocean:'#39a1ab'};
   const key=(seed,x,z,step)=>`${seed}:${x}:${z}:${step}`;
   function visible(){if(!result||!width)return [];const step=Math.max(4,Math.min(256,2**Math.ceil(Math.log2(bpp*4)))),span=step*32,left=centre.x-width*bpp/2,top=centre.z-height*bpp/2,tiles=[];
@@ -30,7 +31,7 @@ const worldMap=(()=>{
     ctx.textAlign='left';ctx.font='11px system-ui';ctx.fillStyle='#fff';ctx.fillText('N ↑',width-34,22);
   }
   function resize(){if(!canvas)return;width=host.clientWidth;const ratio=window.devicePixelRatio||1;canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;if(readout)readout.style.top=`${height-30}px`;ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);draw();pump()}
-  function update(){centre.x=Math.max(-29980000,Math.min(29980000,centre.x));centre.z=Math.max(-29980000,Math.min(29980000,centre.z));if(readout)readout.textContent=`Centre X ${Math.round(centre.x)}, Z ${Math.round(centre.z)} · drag to explore`;draw();pump()}
+  function update(){centre.x=Math.max(-29980000,Math.min(29980000,centre.x));centre.z=Math.max(-29980000,Math.min(29980000,centre.z));if($('map-x')){$('map-x').value=Math.round(centre.x);$('map-z').value=Math.round(centre.z)}if(readout)readout.textContent=`Centre X ${Math.round(centre.x)}, Z ${Math.round(centre.z)} · drag to explore`;draw();pump()}
   function zoom(factor){bpp=Math.max(.25,Math.min(64,bpp*factor));update()}
   function describe(event){const rect=canvas.getBoundingClientRect(),x=Math.floor(centre.x+(event.clientX-rect.left-width/2)*bpp),z=Math.floor(centre.z+(event.clientY-rect.top-height/2)*bpp);let text=`X ${x}, Z ${z}`;
     const candidates=[...cache.values()].filter(t=>t.data.seed===result.seed&&x>=t.data.x&&z>=t.data.z&&x<t.data.x+t.data.step*32&&z<t.data.z+t.data.step*32).sort((a,b)=>a.data.step-b.data.step);
@@ -63,7 +64,7 @@ const worldMap=(()=>{
     canvas.onpointerup=e=>{const clicked=drag&&Math.hypot(e.clientX-drag.x,e.clientY-drag.z)<5;drag=null;canvas.classList.remove('dragging');if(clicked)inspectPoint(e)};canvas.onpointercancel=()=>{drag=null;canvas.classList.remove('dragging')};
     canvas.addEventListener('wheel',e=>{e.preventDefault();const rect=canvas.getBoundingClientRect(),dx=e.clientX-rect.left-width/2,dz=e.clientY-rect.top-height/2,old=bpp;zoom(e.deltaY>0?1.3:1/1.3);centre.x+=dx*(old-bpp);centre.z+=dz*(old-bpp);update()},{passive:false});
     canvas.onkeydown=e=>{const moves={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};if(moves[e.key]){e.preventDefault();centre.x+=moves[e.key][0]*width*bpp*.4;centre.z+=moves[e.key][1]*height*bpp*.4;update()}else if(e.key==='+'||e.key==='=')zoom(.5);else if(e.key==='-')zoom(2)};
-    resize();
+    $('map-x').value=centre.x;$('map-z').value=centre.z;resizeWatch.disconnect();resizeWatch.observe(host);resize();
   }
-  window.addEventListener('resize',resize);return {show,clear(){host?.closest('.map-panel').classList.remove('expanded');height=420;result=null;canvas=null;host=null}};
+  window.addEventListener('resize',resize);return {show,clear(){resizeWatch.disconnect();host?.closest('.map-panel').classList.remove('expanded');height=420;result=null;canvas=null;host=null}};
 })();
