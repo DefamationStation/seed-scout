@@ -59,6 +59,19 @@ class SnapshotTests(unittest.TestCase):
         self.assertNotEqual(fine["elevation"],neighbouring["elevation"])
         with self.assertRaises(urllib.error.HTTPError):
             api("/api/tile",{"seed":"18","x":0,"z":0,"step":0})
+    def test_explorer_search_and_chunk_details(self):
+        scan=api('/api/scan',{'seed':'123','x':8,'z':8,'features':[{'kind':'structure','key':'villages','radius':2000}]})
+        self.assertGreater(len(scan['features']),1)
+        self.assertTrue(any(f['x']==-288 and f['z']==272 for f in scan['features']))
+        self.assertEqual(len({(f['x'],f['z']) for f in scan['features']}),len(scan['features']))
+        p=api('/api/point',{'seed':'123','x':-1,'z':-17})
+        self.assertEqual((p['chunkX'],p['chunkZ']),(-1,-2))
+        t=api('/api/tile',{'seed':'123','x':-1,'z':-17,'step':4})
+        self.assertEqual(p['biome'],t['palette'][t['biomes'][0]])
+        self.assertEqual(p['groundY'],t['elevation'][0])
+        opened=api('/api/open',{'seed':'-9223372036854775808','x':0,'z':0})
+        self.assertEqual(opened['seed'],'-9223372036854775808')
+        self.assertEqual(opened['features'],[])
     def test_reject_invalid_radius(self):
         with self.assertRaises(urllib.error.HTTPError) as e:
             api("/api/inspect",{"seed":"0","features":[{"kind":"structure","key":"villages","radius":9000}]})

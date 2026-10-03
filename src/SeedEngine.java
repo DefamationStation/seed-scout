@@ -75,7 +75,7 @@ public final class SeedEngine {
                 String command=request.has("cmd")?request.get("cmd").getAsString():"inspect";
             if(command.equals("start")) { if(active!=null && active.finished.get()<active.threads)throw new IllegalStateException("Stop the current search first"); active=new Job(request); active.start(); }
                 else if(command.equals("stop")) { if(active!=null)active.running.set(false); }
-                else if(command.equals("tile")) { final var tileRequest=request;MAP_WORKERS.execute(()->{try{emit(Map.of("type","response","id",tileRequest.get("id").getAsLong(),"data",tile(tileRequest)));}catch(Throwable e){emit(Map.of("type","error","id",tileRequest.get("id").getAsLong(),"message",e.toString()));}}); }
+                else if(command.equals("tile")||command.equals("point")||command.equals("scan")) { final var tileRequest=request;MAP_WORKERS.execute(()->{try{emit(Map.of("type","response","id",tileRequest.get("id").getAsLong(),"data",command.equals("point")?point(tileRequest):command.equals("scan")?scan(tileRequest):tile(tileRequest)));}catch(Throwable e){emit(Map.of("type","error","id",tileRequest.get("id").getAsLong(),"message",e.toString()));}}); }
                 else emit(Map.of("type","response","id",request.get("id").getAsLong(),"data",inspect(request)));
             }
             catch(Throwable error) { emit(Map.of("type","error","id",request!=null&&request.has("id")?request.get("id").getAsLong():-1L,"message",error.toString())); error.printStackTrace(System.err); }
@@ -105,6 +105,27 @@ public final class SeedEngine {
         var result=evaluate(seed,request,wanted,null);
         if(result==null)return Map.of("seed",Long.toString(seed),"match",false);
         result.put("match",true);return result;
+    }
+    static Object point(JsonObject r) {
+        long seed=Long.parseLong(r.get("seed").getAsString());int x=r.get("x").getAsInt(),z=r.get("z").getAsInt();
+        var state=MAP_STATES.get().computeIfAbsent(seed,s->RandomState.create(access.lookupOrThrow(Registries.NOISE),s,generator.generatorSettings().value()));
+        var column=generator.getBaseColumn(x,z,heights,state);int top=column.topBlockY();
+        var manager=new BiomeManager(generator.getBiomeSource().createUncachedResolver(state),BiomeManager.obfuscateSeed(seed));
+        var block=column.getBlock(top);int cx=Math.floorDiv(x,16),cz=Math.floorDiv(z,16);
+        return Map.of("x",x,"z",z,"chunkX",cx,"chunkZ",cz,"surfaceY",top,"groundY",column.findTopSolidBlockY(),"biome",manager.getBiome(x,top,z).unwrapKey().orElseThrow().identifier().getPath(),"water",block!=null&&!block.getFluidState().isEmpty(),"slimeChunk",WorldgenRandom.seedSlimeChunk(cx,cz,seed,987234911L).nextInt(10)==0);
+    }
+    static Object scan(JsonObject r) {
+        long seed=Long.parseLong(r.get("seed").getAsString());int x=r.get("x").getAsInt(),z=r.get("z").getAsInt();
+        var state=MAP_STATES.get().computeIfAbsent(seed,s->RandomState.create(access.lookupOrThrow(Registries.NOISE),s,generator.generatorSettings().value()));
+        var origin=generator.getOrigin(state);var structState=ChunkGeneratorStructureState.createForNormal(state,seed,origin,generator.getBiomeSource(),access.lookupOrThrow(Registries.STRUCTURE_SET));
+        var found=new ArrayList<Map<String,Object>>();
+        for(var f:parseFeatures(r.getAsJsonArray("features"))) {
+            if(f.kind.equals("structure"))findStructures(f,seed,state,structState,x,z,null,found);
+            else {var b=findBiome(f,seed,state,x,z,null,false);if(b!=null)found.add(b);}
+            if(found.size()>=500)break;
+        }
+        found.sort(Comparator.comparingLong(f->((Number)f.get("distance")).longValue()));
+        return Map.of("seed",Long.toString(seed),"x",x,"z",z,"features",found,"limited",found.size()>=500);
     }
     record Feature(String kind,String key,int radius) {}
     static List<Feature> parseFeatures(JsonArray wanted) {
@@ -142,6 +163,9 @@ public final class SeedEngine {
         return Map.of("kind",f.kind,"key",f.key,"x",pos.getX(),"y",pos.getY(),"z",pos.getZ(),"distance",Math.round(Math.hypot(pos.getX()-x,pos.getZ()-z)),"detail",detail,"confidence",confidence);
     }
     static Map<String,Object> findStructure(Feature f,long seed,RandomState state,ChunkGeneratorStructureState structState,int x,int z,Job job) {
+        return findStructures(f,seed,state,structState,x,z,job,null);
+    }
+    static Map<String,Object> findStructures(Feature f,long seed,RandomState state,ChunkGeneratorStructureState structState,int x,int z,Job job,List<Map<String,Object>> all) {
         var holder=sets.get(f.key);if(holder==null)throw new IllegalArgumentException("Unknown structure: "+f.key);
         var set=holder.value(); var placement=set.placement();
         int minX=Math.floorDiv(x-f.radius-32,16),maxX=Math.floorDiv(x+f.radius+32,16),minZ=Math.floorDiv(z-f.radius-32,16),maxZ=Math.floorDiv(z+f.radius+32,16);
@@ -166,7 +190,9 @@ public final class SeedEngine {
                 var start=structure.generate(entry.structure(),Level.OVERWORLD,access,generator,generator.getBiomeSource(),climate,state,templates,seed,c,0,heights,structure.biomes()::contains);
                 if(start.isValid()) {
                     var pos=placement.getLocatePos(c);
-                    return found(f,new BlockPos(pos.getX(),start.getBoundingBox().minY(),pos.getZ()),x,z,entry.structure().unwrapKey().orElseThrow().identifier().getPath(),"Snapshot structure start confirmed");
+                    var match=found(f,new BlockPos(pos.getX(),start.getBoundingBox().minY(),pos.getZ()),x,z,entry.structure().unwrapKey().orElseThrow().identifier().getPath(),"Snapshot structure start confirmed");
+                    if(all==null)return match;
+                    all.add(match);if(all.size()>=500)return null;break;
                 }
             }
         }

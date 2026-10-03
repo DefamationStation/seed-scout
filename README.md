@@ -77,3 +77,18 @@ surface-height viability checks: https://github.com/Cubitect/cubiomes.
 We use the locally installed 26.4 snapshot implementation rather than assume a 26.3 map library
 matches this snapshot. Native terrain columns and seeded biome boundary resolution improve
 surface accuracy without generating or touching player worlds.
+
+## Explore a selected seed
+
+Click a seed result, or enter any numeric seed and click **Open map** to explore it independently
+of the seed-search conditions. Drag/zoom to generate more terrain. The map's separate search panel
+finds all occurrences of a chosen supported structure (or all 18 types), within 32–2,000 blocks of
+the map centre. Biome searches find the nearest sampled match. Results become clickable map markers;
+click a result button to travel to it. A scan is capped at 500 results and reports when capped.
+Use X/Z and **Go to coordinates** to travel elsewhere; repeat **Search area** there.
+Click any map location to highlight its chunk and show exact sampled point coordinates, chunk X/Z,
+surface biome, base ground height, water and the native Java slime-chunk flag. Click a marker for its
+structure subtype, locate coordinates, bounding-box minimum Y, and confidence. **Search around here**
+searches around that clicked location. Area markers persist while exploring this seed in the current
+browser session. The ten unsupported feature types listed in the coverage discussion have not been
+added as search filters; slime status is available in chunk details.

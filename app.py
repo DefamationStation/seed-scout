@@ -104,6 +104,20 @@ class Engine:
             self.tiles[key]=result
             while len(self.tiles)>256: self.tiles.popitem(last=False)
         return result
+    def map_request(self,request,command):
+        seed=str(int(request['seed']));x,z=int(request['x']),int(request['z'])
+        if not -(1<<63)<=int(seed)<(1<<63) or max(abs(x),abs(z))>29980000: raise ValueError('Invalid map coordinates or seed')
+        payload=dict(cmd=command,id=self.next_id(),seed=seed,x=x,z=z)
+        if command=='scan':
+            features=request.get('features',[])
+            if not 1<=len(features)<=18: raise ValueError('Choose 1–18 map features')
+            for f in features:
+                if f.get('kind') not in ('structure','biome'): raise ValueError('Invalid map feature')
+                if f.get('key') not in self.catalog['sets' if f['kind']=='structure' else 'biomes']: raise ValueError('Unknown map feature')
+                f['radius']=int(f['radius'])
+                if not 32<=f['radius']<=2000: raise ValueError('Map search radius must be 32–2,000 blocks')
+            payload['features']=features
+        return self.rpc(payload)
     def rpc(self,request):
         event=threading.Event(); result=[]
         with self.lock: self.pending[request['id']]=(event,result)
@@ -155,6 +169,9 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/stop': self.server.engine.send({'cmd':'stop'});result={'ok':True}
             elif self.path=='/api/inspect': result=self.server.engine.inspect(request)
             elif self.path=='/api/tile': result=self.server.engine.tile(request)
+            elif self.path=='/api/point': result=self.server.engine.map_request(request,'point')
+            elif self.path=='/api/scan': result=self.server.engine.map_request(request,'scan')
+            elif self.path=='/api/open': result=self.server.engine.map_request(request,'open')
             elif self.path=='/api/export':
                 target=ROOT/'runtime/exported-results.json'
                 with self.server.engine.lock: exported=copy.deepcopy(self.server.engine.state)
