@@ -42,6 +42,23 @@ class SnapshotTests(unittest.TestCase):
         api("/api/start",{**req,"seed":s["nextSeed"],"limit":2});after=stopped()
         self.assertEqual(after["tested"],2)
         self.assertEqual(int(after["nextSeed"]),int(s["nextSeed"])+2)
+    def test_tiles_and_surface_biome(self):
+        request={"seed":"18","features":[{"kind":"biome","key":"cherry_grove","radius":1000}]}
+        result=api("/api/inspect",request)
+        self.assertTrue(result["match"])
+        point=result["features"][0]
+        self.assertIn("surface-biome",point["confidence"])
+        fine=api("/api/tile",{"seed":"18","x":point["x"],"z":point["z"],"step":4})
+        coarse=api("/api/tile",{"seed":"18","x":point["x"],"z":point["z"],"step":16})
+        self.assertEqual(fine["palette"][fine["biomes"][0]],"cherry_grove")
+        self.assertEqual(fine["elevation"][0],coarse["elevation"][0])
+        self.assertEqual(fine["palette"][fine["biomes"][0]],coarse["palette"][coarse["biomes"][0]])
+        self.assertEqual(len(fine["biomes"]),1024)
+        self.assertEqual(fine,api("/api/tile",{"seed":"18","x":point["x"],"z":point["z"],"step":4}))
+        neighbouring=api("/api/tile",{"seed":"18","x":point["x"]+128,"z":point["z"],"step":4})
+        self.assertNotEqual(fine["elevation"],neighbouring["elevation"])
+        with self.assertRaises(urllib.error.HTTPError):
+            api("/api/tile",{"seed":"18","x":0,"z":0,"step":0})
     def test_reject_invalid_radius(self):
         with self.assertRaises(urllib.error.HTTPError) as e:
             api("/api/inspect",{"seed":"0","features":[{"kind":"structure","key":"villages","radius":9000}]})

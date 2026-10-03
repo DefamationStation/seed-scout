@@ -38,6 +38,8 @@ public final class SeedEngine {
     static final ScheduledExecutorService PROGRESS=Executors.newSingleThreadScheduledExecutor(r->{var t=new Thread(r,"search-progress");t.setDaemon(true);return t;});
     static final Map<String,String> biomeNames=new TreeMap<>();
     static final ConcurrentMap<Integer,List<int[]>> biomeOffsets=new ConcurrentHashMap<>();
+    static final ExecutorService MAP_WORKERS=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(32),r->{var t=new Thread(r,"map-tile");t.setDaemon(true);return t;});
+    static final ThreadLocal<Map<Long,RandomState>> MAP_STATES=ThreadLocal.withInitial(()->new LinkedHashMap<>(4,.75f,true){protected boolean removeEldestEntry(Map.Entry<Long,RandomState> e){return size()>3;}});
     static synchronized void emit(Object obj) { OUTPUT.println("SEEDSCOUT " + JSON.toJson(obj)); OUTPUT.flush(); }
     static void initialize() throws Exception {
         // Keep game logging separate from the machine-readable protocol.
@@ -73,12 +75,29 @@ public final class SeedEngine {
                 String command=request.has("cmd")?request.get("cmd").getAsString():"inspect";
             if(command.equals("start")) { if(active!=null && active.finished.get()<active.threads)throw new IllegalStateException("Stop the current search first"); active=new Job(request); active.start(); }
                 else if(command.equals("stop")) { if(active!=null)active.running.set(false); }
+                else if(command.equals("tile")) { final var tileRequest=request;MAP_WORKERS.execute(()->{try{emit(Map.of("type","response","id",tileRequest.get("id").getAsLong(),"data",tile(tileRequest)));}catch(Throwable e){emit(Map.of("type","error","id",tileRequest.get("id").getAsLong(),"message",e.toString()));}}); }
                 else emit(Map.of("type","response","id",request.get("id").getAsLong(),"data",inspect(request)));
             }
             catch(Throwable error) { emit(Map.of("type","error","id",request!=null&&request.has("id")?request.get("id").getAsLong():-1L,"message",error.toString())); error.printStackTrace(System.err); }
         }
         if(active!=null)active.running.set(false);
         PROGRESS.shutdown();
+        MAP_WORKERS.shutdownNow();
+    }
+    static Object tile(JsonObject r) {
+        long seed=Long.parseLong(r.get("seed").getAsString());int x=r.get("x").getAsInt(),z=r.get("z").getAsInt(),step=r.get("step").getAsInt(),size=32;
+        var state=MAP_STATES.get().computeIfAbsent(seed,s->RandomState.create(access.lookupOrThrow(Registries.NOISE),s,generator.generatorSettings().value()));
+        var biomeManager=new BiomeManager(generator.getBiomeSource().createUncachedResolver(state),BiomeManager.obfuscateSeed(seed));
+        var palette=new ArrayList<String>();var paletteIndices=new HashMap<String,Integer>();var biomes=new int[size*size];var elevation=new int[size*size];var water=new boolean[size*size];var shade=new int[size*size];
+        for(int row=0;row<size;row++)for(int col=0;col<size;col++) {
+            int bx=x+col*step,bz=z+row*step,i=row*size+col;
+            var column=generator.getBaseColumn(bx,bz,heights,state);int top=column.topBlockY();
+            elevation[i]=column.findTopSolidBlockY();var topBlock=column.getBlock(top);water[i]=topBlock!=null&&!topBlock.getFluidState().isEmpty();
+            shade[i]=Math.clamp(column.surfaceGradientX()-column.surfaceGradientZ(),-30,30);
+            String name=biomeManager.getBiome(bx,top,bz).unwrapKey().orElseThrow().identifier().getPath();
+            biomes[i]=paletteIndices.computeIfAbsent(name,k->{palette.add(k);return palette.size()-1;});
+        }
+        return Map.of("seed",Long.toString(seed),"x",x,"z",z,"step",step,"size",size,"palette",palette,"biomes",biomes,"elevation",elevation,"water",water,"shade",shade);
     }
     static Object inspect(JsonObject request) {
         long seed=Long.parseLong(request.get("seed").getAsString());
@@ -105,7 +124,7 @@ public final class SeedEngine {
         var parsed=parseFeatures(wanted);
         for(var feature:parsed) {
             if(job!=null && !job.running.get())return null;
-            Map<String,Object> match=feature.kind.equals("structure")?findStructure(feature,seed,state,structState,x,z,job):findBiome(feature,state,x,z,job);
+            Map<String,Object> match=feature.kind.equals("structure")?findStructure(feature,seed,state,structState,x,z,job):findBiome(feature,seed,state,x,z,job,request.has("biomeMode")&&request.get("biomeMode").getAsString().equals("fast"));
             if(match==null)return null;
             found.add(match);
         }
@@ -153,18 +172,22 @@ public final class SeedEngine {
         }
         return null;
     }
-    static Map<String,Object> findBiome(Feature f,RandomState state,int x,int z,Job job) {
+    static Map<String,Object> findBiome(Feature f,long seed,RandomState state,int x,int z,Job job,boolean fast) {
         if(!biomeNames.containsKey(f.key))throw new IllegalArgumentException("Unknown biome: "+f.key);
         int y=(f.key.equals("deep_dark")||f.key.equals("lush_caves")||f.key.equals("dripstone_caves")||f.key.equals("sulfur_caves"))?-32:64;
         var resolver=generator.getBiomeSource().createUncachedResolver(state);
+        var manager=new BiomeManager(resolver,BiomeManager.obfuscateSeed(seed));
         // A sampled scan can miss a tiny patch, but every returned biome point is real.
         var offsets=biomeOffsets.computeIfAbsent(f.radius,r->{var list=new ArrayList<int[]>();for(int dx=-r/32;dx<=r/32;dx++)for(int dz=-r/32;dz<=r/32;dz++)if(Math.hypot(dx*32,dz*32)<=r)list.add(new int[]{dx*32,dz*32});list.sort(Comparator.comparingDouble(a->Math.hypot(a[0],a[1])));return list;});
         for(var offset:offsets) {
             if(job!=null && !job.running.get())return null;
             int bx=Math.floorDiv(x+offset[0],4)*4,bz=Math.floorDiv(z+offset[1],4)*4;
             if(Math.hypot(bx-x,bz-z)>f.radius)continue;
-            if(resolver.getNoiseBiome(Math.floorDiv(bx,4),Math.floorDiv(y,4),Math.floorDiv(bz,4)).unwrapKey().orElseThrow().identifier().getPath().equals(f.key))
-                return found(f,new BlockPos(bx,y,bz),x,z,"32-block sampling at Y="+y,"Snapshot noise-biome sample");
+            if((!fast&&y!=-32)||resolver.getNoiseBiome(Math.floorDiv(bx,4),Math.floorDiv(y,4),Math.floorDiv(bz,4)).unwrapKey().orElseThrow().identifier().getPath().equals(f.key)) {
+                int confirmedY=y==-32?y:generator.getBaseColumn(bx,bz,heights,state).topBlockY();
+                if(!manager.getBiome(bx,confirmedY,bz).unwrapKey().orElseThrow().identifier().getPath().equals(f.key))continue;
+                return found(f,new BlockPos(bx,confirmedY,bz),x,z,"32-block candidate scan; block-biome boundary and terrain height checked",y==-32?"Snapshot cave-biome point confirmed":"Snapshot surface-biome point confirmed");
+            }
         }
         return null;
     }

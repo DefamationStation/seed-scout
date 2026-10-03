@@ -1,5 +1,6 @@
 """Local-only browser UI and a persistent snapshot generation engine."""
 import argparse, atexit, copy, json, os, pathlib, secrets, subprocess, threading, time, webbrowser, urllib.request
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from build import ROOT, prepare
 
@@ -7,14 +8,16 @@ class Engine:
     def __init__(self):
         self.lock=threading.RLock(); self.write_lock=threading.Lock(); self.ready=threading.Event()
         self.catalog=None; self.failure=''; self.counter=0; self.pending={}
-        self.state={'running':False,'tested':0,'matches':0,'seconds':0,'results':[],'error':''}
+        self.tiles=OrderedDict()
+        self.state={'running':False,'tested':0,'matches':0,'seconds':0,'results':[],'error':'','engineRevision':2}
         command=prepare()
         self.log=open(ROOT/'runtime/engine.log','a',encoding='utf-8')
         self.process=subprocess.Popen(command,cwd=ROOT,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,text=True,encoding='utf-8',bufsize=1)
         saved=ROOT/'runtime/last-search.json'
         if saved.exists():
             try:
-                self.state=json.loads(saved.read_text(encoding='utf-8'));self.state.update(running=False,error='');self.state.pop('id',None)
+                previous=json.loads(saved.read_text(encoding='utf-8'))
+                if previous.get('engineRevision')==2: self.state=previous;self.state.update(running=False,error='');self.state.pop('id',None)
             except (ValueError,OSError): pass
         threading.Thread(target=self.read,daemon=True).start()
     def read(self):
@@ -60,6 +63,8 @@ class Engine:
             if f.get('key') not in choices: raise ValueError('Feature is not in this snapshot.')
             f['radius']=int(f['radius'])
             if not 32<=f['radius']<=8000: raise ValueError('Distances must be 32–8,000 blocks.')
+        request['biomeMode']=request.get('biomeMode','terrain')
+        if request['biomeMode'] not in ('terrain','fast'): raise ValueError('Invalid biome search mode')
         request['anchor']=request.get('anchor','spawn')
         if request['anchor'] not in ('spawn','custom'): raise ValueError('Invalid search origin.')
         for key in ('x','z'): request[key]=int(request.get(key,0))
@@ -80,11 +85,26 @@ class Engine:
         with self.lock:
             if self.state['running']: raise ValueError('Stop the current search before starting another.')
             request.update(cmd='start',id=self.next_id())
-            self.state={'id':request['id'],'running':True,'tested':0,'matches':0,'seconds':0,'results':[],'error':'','request':copy.deepcopy(request)}
+            self.state={'id':request['id'],'running':True,'tested':0,'matches':0,'seconds':0,'results':[],'error':'','request':copy.deepcopy(request),'engineRevision':2}
             self.send(request)
         return {'seed':request['seed']}
     def inspect(self,request):
         request=self.validate(request); request.update(cmd='inspect',id=self.next_id())
+        return self.rpc(request)
+    def tile(self,request):
+        seed=str(int(request['seed']))
+        x,z,step=(int(request[k]) for k in ('x','z','step'))
+        if not -(1<<63)<=int(seed)<(1<<63) or step not in (4,8,16,32,64,128,256): raise ValueError('Invalid map seed or scale')
+        if abs(x)>29990000 or abs(z)>29990000: raise ValueError('Map is limited to the Minecraft world border')
+        key=(seed,x,z,step)
+        with self.lock:
+            if key in self.tiles: self.tiles.move_to_end(key);return self.tiles[key]
+        result=self.rpc(dict(cmd='tile',id=self.next_id(),seed=seed,x=x,z=z,step=step))
+        with self.lock:
+            self.tiles[key]=result
+            while len(self.tiles)>256: self.tiles.popitem(last=False)
+        return result
+    def rpc(self,request):
         event=threading.Event(); result=[]
         with self.lock: self.pending[request['id']]=(event,result)
         try:
@@ -120,7 +140,7 @@ class Handler(BaseHTTPRequestHandler):
             target=ROOT/'runtime/exported-results.json'
             if not target.exists(): return self.reply({'error':'Export results first'},404)
             raw=target.read_bytes();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Disposition','attachment; filename=seed-scout-results.json');self.end_headers();self.wfile.write(raw);return
-        files={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}
+        files={'/':'index.html','/app.js':'app.js','/map.js':'map.js','/style.css':'style.css'}
         if self.path not in files: return self.reply({'error':'Not found'},404)
         path=ROOT/'web'/files[self.path];raw=path.read_bytes()
         self.send_response(200);self.send_header('Content-Type',{'html':'text/html; charset=utf-8','js':'text/javascript','css':'text/css'}[path.suffix[1:]])
@@ -134,6 +154,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/start': result=self.server.engine.start(request)
             elif self.path=='/api/stop': self.server.engine.send({'cmd':'stop'});result={'ok':True}
             elif self.path=='/api/inspect': result=self.server.engine.inspect(request)
+            elif self.path=='/api/tile': result=self.server.engine.tile(request)
             elif self.path=='/api/export':
                 target=ROOT/'runtime/exported-results.json'
                 with self.server.engine.lock: exported=copy.deepcopy(self.server.engine.state)

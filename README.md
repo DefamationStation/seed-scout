@@ -14,7 +14,7 @@ and a maximum distance between feature matches. Blank starting seed chooses a ra
 Stop waits for active checks; Resume starts at the earliest unfinished seed, potentially repeating
 some completed checks rather than skipping any. Results persist in runtime/last-search.json.
 The **Check** field checks an existing numeric seed against your current selection.
-Export saves JSON including feature coordinates to runtime/exported-results.json and offers a browser download. Hover map markers for X/Y/Z and confidence.
+Export saves JSON including feature coordinates to runtime/exported-results.json and offers a browser download. Click a seed card to generate its terrain map. Drag or use arrow keys to pan; scroll or +/- to zoom. Spawn recentres the map. Expand opens a larger map. Move over the map for coordinates, biome and ground height. New areas generate as you pan; cached tiles are reused. Only selected search matches are shown as numbered markers; the map does not scan every structure in newly viewed areas.
 Close app stops the local backend; closing only the browser leaves it available for another visit.
 
 ## Accuracy
@@ -26,13 +26,18 @@ Close app stops the local backend; closing only the browser leaves it available 
   Y is its bounding-box minimum, not necessarily an entrance or walkable height.
 - Spawn is the generator's initial spawn region. Final player spawn can shift after terrain checks.
   Distances are horizontal distances from that region, not a guarantee from the final player position.
-- Biomes are sampled every 32 blocks using the snapshot's noise biome resolver at Y=64,
-  or Y=-32 for cave biomes. Tiny patches or caves at other heights can be missed, and terrain's
-  resolved surface biome can differ from a raw noise biome sample.
+- The default terrain-aware biome search samples every 32 blocks at the snapshot's actual base
+  surface height, with Minecraft's seeded block-biome boundary resolver. Cave targets use Y=-32.
+  Tiny patches or caves at other heights can still be missed. The optional fast mode prefilters at
+  Y=64 before confirming surface height, and may miss more mountain biomes.
+- Terrain tiles use the snapshot's base noise columns for ground elevation, surface water,
+  surface biome and relief shading. Tiles refine when zoomed in (minimum 4 blocks/sample).
+  This is a sampled base-terrain preview: surface building, trees, structures, decorations,
+  and later changes are not generated. It is not a block-exact image of a completed world.
 - Cluster distance checks the nearest matches found. Another valid grouping can be missed.
 - Default vanilla Overworld only. Custom world-generation datapacks, large biomes, amplified worlds,
   loot contents, specific building layouts and terrain shapes are not search criteria.
-- This is an efficient position search, not a full terrain preview or an exhaustive mathematical
+- This is an efficient position search, not a full block-by-block world simulation or an exhaustive mathematical
   search of all 2^64 seeds. Wide radii and expensive features reduce throughput.
 
 ## Implementation and requirements
@@ -61,3 +66,14 @@ that small warm-engine sample is illustrative, not a performance guarantee.
 The fast-map principle is to calculate selected biome/structure positions rather than generate
 and render every block. Cubiomes demonstrates this openly: https://github.com/Cubitect/cubiomes.
 Seed Scout instead uses the installed snapshot directly for version-specific behavior.
+
+## Research behind the map
+
+Chunkbase explains that underlying biome coastlines can differ from actual terrain, and its terrain
+option adjusts those colours. Its own known limitations include world spawn and missing structures:
+https://www.chunkbase.com/apps/seed-map (reviewed 2026-10-03; page updated for MC 26.3).
+Cubiomes exposes fast biome/structure calculations and warns that some structures also need
+surface-height viability checks: https://github.com/Cubitect/cubiomes.
+We use the locally installed 26.4 snapshot implementation rather than assume a 26.3 map library
+matches this snapshot. Native terrain columns and seeded biome boundary resolution improve
+surface accuracy without generating or touching player worlds.
