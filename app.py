@@ -244,6 +244,7 @@ class Engine:
             allowed=(self.catalog.get('structureTemplates',{}).get(f['key'],[]) if field=='templates' and f['kind']=='structure' else
                      [self.catalog['variantDetails'][k] for k in variants] if field=='variants' else
                      [] if field=='templates' else
+                     self.catalog.get('structurePlacements',{}).get('shipwrecks',[]) if f['kind']=='structure' and f['key']=='shipwrecks' else
                      [p for p in ('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground')
                       if f['key'] in ('ruined_portals','huge_ruined_portals') and f['key']+'_'+p in self.catalog['sets']])
             if not isinstance(values,list) or not values or any(not isinstance(v,str) or v not in allowed for v in values):

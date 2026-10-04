@@ -593,14 +593,14 @@ const worldMap = (() => {
         marker?.kind === 'structure' ? api('/api/structure', { seed, key: marker.key, x: marker.x, z: marker.z }).catch(() => null) : null,
       ]);
       if (result?.seed !== seed || token !== clickToken) return;
-      const fact = (name, value) => `<div><dt>${name}</dt><dd>${value}</dd></div>`, shape = built?.valid && built.box;
+      const fact = (name, value) => `<div><dt>${name}</dt><dd>${value}</dd></div>`, shape = built?.valid && (built.shipBox || built.box);
       if (shape) { selection.box = shape; invalidate(); }
       const confidence = !marker ? '' : built?.valid ? built.confidence : built ? '' : marker.confidence;
       // A built structure comes with a block to stand in beside or inside it; anywhere else it is the block above the surface.
       const stand = (built?.valid && built.stand) || { x: p.x, y: p.surfaceY + 1, z: p.z };
       // The card leads with where it is and the one thing worth knowing about it; the rest is under "More".
       const biome = `<i class="swatch" style="background:${terrain.colour(p.biome)}"></i>${esc(label(p.biome))}`;
-      const setting = shape && stand.where === 'inside it' ? `Buried · Y ${shape.minY} to ${shape.maxY}`
+      const setting = built?.shipwreckTemplate && built.placement ? `${esc(placementName('shipwrecks', built.placement))}${built.shipY !== undefined ? ' · predicted' : ''}` : shape && stand.where === 'inside it' ? `Buried · Y ${shape.minY} to ${shape.maxY}`
         : p.water ? `Under water · ${p.surfaceY - p.groundY} deep` : `Ground Y ${p.groundY}`;
       let more = false;
       try { more = localStorage.getItem('seed-scout-inspector-more') === '1'; } catch { }
@@ -624,12 +624,14 @@ const worldMap = (() => {
           ${fact('Ground', `Y ${p.groundY}${p.water ? ' · below water' : ''}`)}
           ${(built?.portalSize || marker?.portalSize) ? fact('Portal size', (built?.portalSize || marker.portalSize) === 'huge' ? 'Huge (giant template)' : 'Regular') : ''}
           ${(built?.shipwreckTemplate || marker?.shipwreckTemplate) ? fact('Ship template', esc(shipTemplateName(built?.shipwreckTemplate || marker.shipwreckTemplate))) : ''}
-          ${(built?.placement || marker?.placement) ? fact('Placement', esc(label(built?.placement || marker.placement))) : ''}
+          ${(built?.placement || marker?.placement) ? fact('Placement', esc(placementName(marker?.key || built?.key, built?.placement || marker.placement))) : ''}
+          ${built?.shipDeckY !== undefined ? fact('Ship / water', `Deck Y ${built.shipDeckY} · water Y ${built.waterY} <small>Keel Y ${built.shipKeelY} · ${built.groundedHullColumns} hull columns touch ground</small>`) : ''}
           ${shape ? fact('Structure', `Y ${shape.minY} to ${shape.maxY} <small>${shape.maxX - shape.minX + 1} × ${shape.maxZ - shape.minZ + 1} blocks · ${built.pieces} piece${built.pieces === 1 ? '' : 's'}</small>`) : marker ? fact(marker.kind === 'biome' ? 'Sampled at' : 'Structure Y', `Y ${marker.y}`) : ''}
           ${fact('Nether', `X ${Math.floor(p.x / 8)} · Z ${Math.floor(p.z / 8)}`)}
           ${fact('Slime chunk', p.slimeChunk ? '<span class="yes">Yes</span>' : 'No')}
         </dl>
         ${confidence ? `<p class="confidence">${icon('check-circle')}${esc(confidence)}</p>` : ''}
+        ${built?.placementAccuracy ? `<p class="hint">${esc(built.placementAccuracy)}</p>` : ''}
         <p class="hint">Base terrain prediction. Spawn and completed-world details may differ.</p>
       </details>`;
       $('info-more').ontoggle = () => { try { localStorage.setItem('seed-scout-inspector-more', $('info-more').open ? '1' : '0'); } catch { } };

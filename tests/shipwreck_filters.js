@@ -28,4 +28,7 @@ vm.runInNewContext(app.slice(app.indexOf('function shipTemplateName('),app.index
 assert.equal(context.templateName('shipwreck/with_mast'),'Whole ship with mast · Upright · Non-degraded');
 assert.equal(context.templateName('shipwreck/upsidedown_fronthalf_degraded'),'Front half · Upside down · Degraded');
 assert.equal(context.templateName('shipwreck/sideways_backhalf'),'Back half · Sideways · Non-degraded');
+vm.runInNewContext(app.slice(app.indexOf('const SHIP_PLACEMENTS ='),app.indexOf('function shipTemplateName('))+'\nglobalThis.placementLabel=placementName;',context);
+assert.equal(context.placementLabel('shipwrecks','afloat'),'Floating at water surface');
+assert.equal(context.placementLabel('shipwrecks','surface'),'Surface / shallow-water wreck');
 console.log('Ship template/location intersection, alternatives, readable names, and preset round trips passed.');

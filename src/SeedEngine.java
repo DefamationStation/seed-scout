@@ -108,7 +108,8 @@ public final class SeedEngine {
         structureTemplates.put("ocean_ruins",List.of("single","cluster"));
         structureTemplates.put("igloos",List.of("basement","no_basement"));
         generator.getBiomeSource().possibleBiomes().forEach(h->h.unwrapKey().ifPresent(k->biomeNames.put(k.identifier().getPath(),k.identifier().toString())));
-        emit(Map.of("type","ready","version",SharedConstants.getCurrentVersion().id(),"sets",sets.keySet(),"biomes",biomeNames.keySet(),"cores",CORES,"mapWorkers",MAP_THREADS,"structureVariants",structureVariants,"variantDetails",variantDetails,"structureTemplates",structureTemplates));
+        var ready=new LinkedHashMap<String,Object>(Map.of("type","ready","version",SharedConstants.getCurrentVersion().id(),"sets",sets.keySet(),"biomes",biomeNames.keySet(),"cores",CORES,"mapWorkers",MAP_THREADS,"structureVariants",structureVariants,"variantDetails",variantDetails,"structureTemplates",structureTemplates));
+        ready.put("structurePlacements",Map.of("shipwrecks",ShipwreckPlacement.OPTIONS));emit(ready);
     }
     public static void main(String[] args) throws Exception {
         initialize();
@@ -283,9 +284,15 @@ public final class SeedEngine {
         var result=new LinkedHashMap<String,Object>(Map.of("valid",true,"kind","structure","key",key,"detail",hit.detail(),"x",x,"y",hit.y,"z",z,"confidence","Snapshot structure start confirmed",
             "box",Map.of("minX",box.minX(),"minY",box.minY(),"minZ",box.minZ(),"maxX",box.maxX(),"maxY",box.maxY(),"maxZ",box.maxZ()),"pieces",hit.start.getPieces().size()));
         if(set==set("ruined_portals"))portalFacts(result,hit);
-        if(set==set("shipwrecks"))result.put("shipwreckTemplate",shipwreckTemplate(hit));
+        if(set==set("shipwrecks")){result.put("shipwreckTemplate",shipwreckTemplate(hit));result.putAll(ShipwreckPlacement.facts(hit,state));}
         builtFacts(result,hit,set);
-        result.put("stand",stand(hit,state));
+        var standing=stand(hit,state);
+        if(result.containsKey("shipDeckY")&&List.of("afloat","surface").contains(result.get("placement"))) {
+            var aboveWater=new LinkedHashMap<String,Object>(standing);
+            aboveWater.put("y",Math.max(((Number)standing.get("y")).intValue(),((Number)result.get("shipDeckY")).intValue()+1));
+            aboveWater.put("where","above water beside it (predicted)");standing=aboveWater;
+        }
+        result.put("stand",standing);
         return result;
     }
     // Where to teleport to for a built structure: an open block to stand in, beside it or inside it.
@@ -532,9 +539,14 @@ public final class SeedEngine {
                 if(hit.start==null)hit=startAt(set,seed,state,structState,climate,c,true);
                 if(hit==null||!f.templates.contains(templateOf(set,hit)))continue;
             }
+            Map<String,Object> shipPlacement=null;
             if(!f.placements.isEmpty()) {
                 if(hit.start==null)hit=startAt(set,seed,state,structState,climate,c,true);
-                if(hit==null||!f.placements.contains(portalPlacement(hit).getSerializedName()))continue;
+                if(hit==null)continue;
+                String placementName;
+                if(set==set("shipwrecks")){shipPlacement=ShipwreckPlacement.facts(hit,state);placementName=(String)shipPlacement.get("placement");}
+                else placementName=portalPlacement(hit).getSerializedName();
+                if(!f.placements.contains(placementName))continue;
             }
             if(hit==null||!portalMatches(f.key,hit,set,seed,state,structState,climate,c))continue;
             var pos=placement.getLocatePos(c);
@@ -547,6 +559,7 @@ public final class SeedEngine {
             var match=new LinkedHashMap<>(found(f,new BlockPos(pos.getX(),hit.y,pos.getZ()),x,z,hit.detail(),confirm?"Snapshot structure start confirmed":"Snapshot generation point confirmed"));
             if(hit.start!=null&&set==set("ruined_portals"))portalFacts(match,hit);
             if(hit.start!=null&&set==set("shipwrecks"))match.put("shipwreckTemplate",shipwreckTemplate(hit));
+            if(shipPlacement!=null)match.putAll(shipPlacement);
             builtFacts(match,hit,set);
             out.add(match);
             out.addAll(extra);taken++;

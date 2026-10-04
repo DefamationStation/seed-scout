@@ -362,9 +362,64 @@ class SnapshotTests(unittest.TestCase):
         self.assertNotEqual(identity(['shipwreck/with_mast']),identity(['shipwreck/with_mast_degraded']))
         self.assertEqual(identity(templates[:2]),identity([templates[1],templates[0],templates[0]]))
 
+    def test_shipwreck_water_placement(self):
+        catalog=api('/api/status')['catalog']
+        self.assertEqual(set(catalog['structurePlacements']['shipwrecks']),{'afloat','surface','submerged','beached'})
+        template='shipwreck/with_mast'
+        for seed,x,z,placement,deck in [('139',2176,3856,'surface',64),('123',192,7056,'submerged',40),('5645',4064,1696,'afloat',64)]:
+            with self.subTest(seed=seed):
+                built=api('/api/structure',{'seed':seed,'key':'shipwrecks','x':x,'z':z})
+                self.assertEqual(built['shipwreckTemplate'],template)
+                self.assertEqual((built['placement'],built['shipDeckY'],built['waterY']),(placement,deck,62))
+                if placement=='afloat':
+                    self.assertEqual(built['groundedHullColumns'],0)
+                    self.assertGreater(built['keelClearance'],0)
+                    self.assertEqual(built['hullWaterCoverage'],100)
+                    self.assertGreater(built['stand']['y'],built['waterY'])
+                else:self.assertGreater(built['groundedHullColumns'],0)
+                self.assertEqual(built['shipBox']['minY'],built['shipY'])
+                self.assertIn('base terrain',built['placementAccuracy'])
+                feature={'kind':'structure','key':'shipwrecks','radius':32,'templates':[template],'variants':['shipwreck'],'placements':[placement]}
+                request={'seed':seed,'anchor':'custom','x':x,'z':z,'features':[feature]}
+                matched=api('/api/inspect',request)
+                self.assertTrue(matched['match']);self.assertEqual(matched['features'][0]['placement'],placement)
+                self.assertEqual(api('/api/scan',{'seed':seed,'x':x,'z':z,'features':[feature]})['features'][0]['placement'],placement)
+                def inspect(**change):return api('/api/inspect',{**request,'features':[{**feature,**change}]})
+                # The mast and a dry deck never let a grounded wreck pass the strict floating filter.
+                self.assertEqual(inspect(placements=['afloat'])['match'],placement=='afloat')
+                self.assertTrue(inspect(placements=['afloat',placement])['match'])
+                self.assertFalse(inspect(mode='exclude')['match'])
+                self.assertEqual(inspect(placements=['afloat'],mode='exclude')['match'],placement!='afloat')
+                self.assertFalse(inspect(count=2)['match'])
+                self.assertFalse(inspect(templates=['shipwreck/with_mast_degraded'])['match'])
+                self.assertFalse(inspect(variants=['shipwreck_beached'])['match'])
+                api('/api/start',{**request,'threads':1,'limit':1,'maxMatches':10,'useCatalogue':False})
+                result=stopped();self.assertEqual(result['matches'],1)
+                self.assertEqual(result['results'][0]['features'],matched['features'])
+                if placement=='afloat':
+                    linked={**feature,'id':'ship'}
+                    ocean={'kind':'biome','key':'ocean','radius':64,'near':'ship'}
+                    combined=api('/api/inspect',{**request,'features':[linked,ocean]})
+                    self.assertTrue(combined['match'])
+                    self.assertEqual(combined['features'][0]['placement'],'afloat')
+                    self.assertEqual(combined['features'][1]['near'],{'key':'shipwrecks','x':x,'z':z})
+                from app import Engine,conditions
+                engine=Engine.__new__(Engine);engine.catalog=catalog
+                original=conditions(engine.validate(request))
+                self.assertNotEqual(original,conditions(engine.validate({**request,'features':[{**feature,'placements':['surface' if placement=='afloat' else 'afloat']}]})))
+                plain={**feature};plain.pop('placements')
+                self.assertEqual(conditions(engine.validate({**request,'features':[plain]})),
+                    conditions(engine.validate({**request,'features':[{**feature,'placements':catalog['structurePlacements']['shipwrecks']}]})))
+        for feature in [{'kind':'structure','key':'shipwrecks','radius':32,'placements':['unknown']},
+                        {'kind':'structure','key':'shipwrecks','radius':32,'placements':[]},
+                        {'kind':'structure','key':'villages','radius':32,'placements':['afloat']},
+                        {'kind':'biome','key':'ocean','radius':32,'placements':['afloat']}]:
+            self.rejected('/api/inspect',{'seed':'123','features':[feature]})
+            self.rejected('/api/scan',{'seed':'123','x':0,'z':0,'features':[feature]})
+
     def test_structure_subcategories(self):
         catalog=api('/api/status')['catalog']
-        expected={'villages':5,'mineshafts':2,'ocean_ruins':2,'shipwrecks':2,'abandoned_camp':18,'ruined_portals':6,'huge_ruined_portals':6}
+        expected={'villages':5,'mineshafts':2,'ocean_ruins':2,'shipwrecks':2,'abandoned_camp':18,'ruined_portals':6,'huge_ruined_portals':6,'igloos':1}
         self.assertEqual({k:len(v) for k,v in catalog['structureVariants'].items()},expected)
         for family,keys in catalog['structureVariants'].items():
             def tile(key):return api('/api/structures',{'seed':'123','x':0,'z':0,'size':2048,'keys':[key]})['features']
@@ -378,8 +433,9 @@ class SnapshotTests(unittest.TestCase):
                     f=variants[0];x,z=f['x'],f['z']
                     self.assertTrue(api('/api/structure',{'seed':'123','key':key,'x':x,'z':z})['valid'])
                     self.assertTrue(api('/api/inspect',{'seed':'123','anchor':'custom','x':x,'z':z,'features':[{'kind':'structure','key':key,'radius':32}]})['match'])
-                    other=next(k for k in keys if k!=key)
-                    self.assertFalse(api('/api/structure',{'seed':'123','key':other,'x':x,'z':z})['valid'])
+                    if len(keys)>1:
+                        other=next(k for k in keys if k!=key)
+                        self.assertFalse(api('/api/structure',{'seed':'123','key':other,'x':x,'z':z})['valid'])
             self.assertEqual(seen,{(f['x'],f['z']) for f in base})
             if family=='ruined_portals':self.assertTrue(all(f['placement'] in ('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground') for f in base))
 

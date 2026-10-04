@@ -97,6 +97,8 @@ const PORTAL_FAMILIES = ['ruined_portals', 'huge_ruined_portals'];
 const isPortalFamily = family => PORTAL_FAMILIES.includes(family);
 const PORTAL_PLACEMENTS = ['on_land_surface', 'partly_buried', 'on_ocean_floor', 'in_mountain', 'underground'];
 const SUBCATEGORY_FILTERS = ['variants', 'placements', 'templates'];
+const SHIP_PLACEMENTS = { afloat: 'Floating at water surface', surface: 'Surface / shallow-water wreck', submerged: 'Deck underwater', beached: 'Beached / on land' };
+const placementName = (family, value) => family === 'shipwrecks' ? SHIP_PLACEMENTS[value] || label(value) : label(value);
 function shipTemplateName(template) {
   const name = template.split('/').pop(), degraded = name.endsWith('_degraded');
   const shape = name.startsWith('with_mast') ? 'Whole ship with mast' : name.includes('_fronthalf') ? 'Front half' : name.includes('_backhalf') ? 'Back half' : 'Whole ship';
@@ -282,7 +284,7 @@ function mergeFamilyConditions(family, force = false) {
   delete next.id;
   for (const field of SUBCATEGORY_FILTERS) {
     const values = base ? base[field] : field === 'templates' ? [] : entries.map(([, f]) => field === 'variants' ? catalog.variantDetails[f.key] : f.key.startsWith(`${family}_`) && !f.key.includes('__') ? f.key.slice(family.length + 1) : null).filter(Boolean);
-    const all = field === 'variants' ? familyVariants(family).map(k => catalog.variantDetails[k]) : field === 'templates' ? familyTemplates(family) : PORTAL_PLACEMENTS;
+    const all = field === 'variants' ? familyVariants(family).map(k => catalog.variantDetails[k]) : field === 'templates' ? familyTemplates(family) : family === 'shipwrecks' ? catalog?.structurePlacements?.shipwrecks || [] : PORTAL_PLACEMENTS;
     if (!values?.length || all.every(v => values.includes(v))) delete next[field];
     else next[field] = [...new Set(values)];
   }
@@ -294,7 +296,7 @@ function mergeFamilyConditions(family, force = false) {
 function familyFilterDescription(f) {
   if (!f) return '';
   return [Array.isArray(f.variants) ? f.variants.length === 1 ? variantName(f.key, f.variants[0]) : f.variants.length ? `${f.variants.length} variants` : 'No variants selected' : '',
-    Array.isArray(f.placements) ? f.placements.length ? f.placements.map(label).join(' or ') : 'No placements selected' : '',
+    Array.isArray(f.placements) ? f.placements.length ? f.placements.map(p => placementName(f.key, p)).join(' or ') : 'No placements selected' : '',
     Array.isArray(f.templates) ? f.key !== 'shipwrecks' ? f.templates.map(t => templateName(f.key, t)).join(' or ') || 'None selected' : f.templates.length === 1 ? shipTemplateName(f.templates[0]) : f.templates.length ? `${f.templates.length} templates` : 'No templates selected' : ''].filter(Boolean).join(' · ');
 }
 const conditionName = f => `${label(f.key)}${familyFilterDescription(f) ? ` (${familyFilterDescription(f)})` : ''}`;
@@ -396,7 +398,7 @@ function openSubcategories(family, mode) {
   subcategoryContext = { family, mode };
   $('subcategory-title').textContent = familyName(family);
   $('subcategory-hint').textContent = (mode === 'find' ? 'Selected variants are alternatives in one search condition. For portals, biome and placement must match the same portal.' : isPortalFamily(family) ? 'Choose which portals appear on the map. Biome and placement filters apply together.' : 'Choose which variants appear on the map.') + (isPortalFamily(family) ? ' Placement names are Minecraft generation types: swamp portals use “On ocean floor” even on dry land.' : '');
-  if (family === 'shipwrecks') $('subcategory-hint').textContent = 'Location type and template must match the same ship. Selected templates are alternatives. Whole ships can still be submerged; some templates only generate in regular shipwrecks.';
+  if (family === 'shipwrecks') $('subcategory-hint').textContent = mode === 'find' ? 'Type, water placement and template must match the same ship. Floating requires a dry deck, water around the hull and no seabed contact. Placement is predicted from base terrain; ice and completed-world details may differ. These rare placements need wider searches.' : 'Choose ship types and templates. Water placement is checked when inspecting a ship or filtering a search.';
   renderSubcategories();
   $('subcategory-dialog').showModal();
 }
@@ -407,12 +409,13 @@ function renderSubcategories() {
   // A family with one variant (igloos) has nothing to choose there.
   const groups = variants.length > 1 ? [{ title: isPortalFamily(family) ? 'Biome variants' : family === 'shipwrecks' ? 'Location types' : 'Variants', field: 'variants', options: variants }] : [];
   if (isPortalFamily(family)) groups.push({ title: 'Placements', field: 'placements', options: PORTAL_PLACEMENTS.filter(p => catalog?.sets.includes(`${family}_${p}`)).map(p => ({ key: `${family}_${p}`, value: p, name: label(p) })) });
+  if (family === 'shipwrecks' && mode === 'find') groups.push({ title: 'Water placement (predicted)', field: 'placements', options: (catalog?.structurePlacements?.shipwrecks || []).map(p => ({ key: family, value: p, name: placementName(family, p) })) });
   // Map markers are only built for shipwrecks, so the other families' traits can filter a search but not a layer.
   const templates = mode === 'find' || family === 'shipwrecks' ? familyTemplates(family) : [];
   if (templates.length) groups.push({ title: templateTitle(family), field: 'templates', options: templates.map(t => ({ key: family, value: t, name: templateName(family, t) })) });
   const option = (name, key, field, value, checked) => `<label class="subcategory-option"><input type="checkbox" data-subkey="${esc(key)}" data-subfield="${field}" value="${esc(value)}" ${checked ? 'checked' : ''}><span>${esc(name)}</span></label>`;
   const selected = (field, value) => !!config && (!Array.isArray(config[field]) || (value === '*' ? groups.find(g => g.field === field).options.every(o => config[field].includes(o.value)) : config[field].includes(value)));
-  $('subcategory-options').innerHTML = (mode === 'find' ? option(family === 'shipwrecks' ? 'Any location type or template' : templates.length ? `Any ${familyName(family).toLowerCase()}` : isPortalFamily(family) ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && SUBCATEGORY_FILTERS.every(field => !config[field])) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
+  $('subcategory-options').innerHTML = (mode === 'find' ? option(family === 'shipwrecks' ? 'Any type, placement or template' : templates.length ? `Any ${familyName(family).toLowerCase()}` : isPortalFamily(family) ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && SUBCATEGORY_FILTERS.every(field => !config[field])) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
 }
 $('subcategory-options').onchange = e => {
   const el = e.target.closest('[data-subkey]'); if (!el || !subcategoryContext) return;

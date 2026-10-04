@@ -272,6 +272,19 @@ non-degraded condition. In Find and Layers, location type and template apply to 
 multiple selected templates are alternatives. A whole-ship template can still be submerged or buried:
 the template filter does not guarantee a ship floating at sea level. The inspector shows the native
 template chosen by Minecraft, and template filters are preserved in saved conditions and layer presets.
+Find also offers **Water placement (predicted)**: **Floating at water surface**, **Surface / shallow-water wreck**,
+**Deck underwater**, and **Beached / on land**. This intersects the same ship's location type and template.
+Floating requires an upright hull at the waterline, a dry deck, at least 95% water beneath the hull, and no
+ground contact at any hull column. Shallow-water ships that rest on the seabed remain a separate category;
+a mast above the water never makes a sunken ship qualify. The engine uses the native unrotated height-sampling
+rectangle and the rotated template's actual hull geometry, with shared full terrain columns and aquifers.
+These are base-terrain predictions: ice, surface decoration and overlapping structures can change the final world.
+The inspector shows predicted keel/deck/water heights, hull contact and the adjusted ship box. Map tile requests
+keep their fast template checks; water placement is evaluated only for a filtered search or an opened inspector.
+Native Java `26.4-snapshot-2` fixture: seed **5645**, locate X **4064**, Z **1696**, whole non-degraded ship with mast,
+predicted keel Y **60**, deck Y **64**, water Y **62**, 100% water coverage and one block of minimum keel clearance.
+`python tests/shipwreck_placement.py` checks the predicted heights against Minecraft's actual `postProcess`
+routine on independently generated base columns, including submerged, shallow and afloat cases and rotations.
 The ruined portal chooser also offers five placement types: **on land surface**, **partly buried**,
 **on ocean floor**, **in mountain**, and **underground**. These use the actual `VerticalPlacement` saved
 by Minecraft's generated portal piece; they are not inferred from biome or height. Swamp portals use
