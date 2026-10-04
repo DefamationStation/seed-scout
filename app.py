@@ -4,9 +4,9 @@ from urllib.parse import urlsplit, parse_qs
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from build import ROOT, prepare
-SAVED=ROOT/'saved-seeds.json'
-CATALOGUE=ROOT/'catalogue.db'
+from build import ROOT, DATA, prepare
+SAVED=DATA/'saved-seeds.json'
+CATALOGUE=DATA/'catalogue.db'
 TILE_POOL=ThreadPoolExecutor(48,thread_name_prefix='tile')
 
 def number(request,key):
@@ -72,9 +72,9 @@ class Engine:
         self.catalogue=Catalogue(); self.jobs={}; self.stopping=False; self.busy=False
         self.state={'running':False,'tested':0,'matches':0,'seconds':0,'results':[],'error':'','engineRevision':2}
         command=prepare()
-        self.log=open(ROOT/'runtime/engine.log','a',encoding='utf-8')
-        self.process=subprocess.Popen(command,cwd=ROOT,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,text=True,encoding='utf-8',bufsize=1)
-        saved=ROOT/'runtime/last-search.json'
+        self.log=open(DATA/'runtime/engine.log','a',encoding='utf-8')
+        self.process=subprocess.Popen(command,cwd=DATA,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,text=True,encoding='utf-8',bufsize=1)
+        saved=DATA/'runtime/last-search.json'
         if saved.exists():
             try:
                 previous=json.loads(saved.read_text(encoding='utf-8'))
@@ -177,7 +177,7 @@ class Engine:
         finally: self.busy=False
         return summary
     def save_results(self):
-        target=ROOT/'runtime/last-search.json'; temp=target.with_suffix('.tmp')
+        target=DATA/'runtime/last-search.json'; temp=target.with_suffix('.tmp')
         temp.write_text(json.dumps(self.state,indent=2),encoding='utf-8'); os.replace(temp,target)
     def saved(self):
         try: return json.loads(SAVED.read_text(encoding='utf-8'))
@@ -437,7 +437,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=='/api/export':
             with self.server.engine.lock: return self.reply(self.server.engine.state)
         if self.path=='/api/export-file':
-            target=ROOT/'runtime/exported-results.json'
+            target=DATA/'runtime/exported-results.json'
             if not target.exists(): return self.reply({'error':'Export results first'},404)
             raw=target.read_bytes();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Disposition','attachment; filename=seed-scout-results.json');self.end_headers();self.wfile.write(raw);return
         # Any page, script or stylesheet directly inside web/ is served; nothing outside it.
@@ -467,7 +467,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/catalogue-delete': self.server.engine.catalogue.delete(int(request['id']));result={'finds':self.server.engine.catalogue.listing()}
             elif self.path=='/api/catalogue-import': result=self.server.engine.catalogue_import(request)
             elif self.path=='/api/export':
-                target=ROOT/'runtime/exported-results.json'
+                target=DATA/'runtime/exported-results.json'
                 with self.server.engine.lock: exported=copy.deepcopy(self.server.engine.state)
                 exported['results']=request.get('results',exported['results'])
                 target.write_text(json.dumps(exported,indent=2),encoding='utf-8')

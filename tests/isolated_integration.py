@@ -5,7 +5,7 @@ sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'tests'))
 import app,integration
 sandbox=pathlib.Path(tempfile.mkdtemp(prefix='http-test-',dir=ROOT/'runtime/search-bench'))
 (sandbox/'runtime').mkdir();shutil.copytree(ROOT/'web',sandbox/'web')
-app.ROOT=sandbox;app.SAVED=sandbox/'saved-seeds.json';app.CATALOGUE=sandbox/'catalogue.db'
+app.ROOT=app.DATA=sandbox;app.SAVED=sandbox/'saved-seeds.json';app.CATALOGUE=sandbox/'catalogue.db'
 app.Catalogue.__init__.__defaults__=(app.CATALOGUE,)
 server=app.ThreadingHTTPServer(('127.0.0.1',0),app.Handler);engine=app.Engine();server.engine=engine
 worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()

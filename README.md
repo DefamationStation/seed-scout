@@ -57,6 +57,28 @@ Tiles are fetched several per request, compressed and cached by the browser acro
 memory caches in the map and backend. Panning and zooming briefly defer new requests until the view settles.
 The power button stops the local backend; closing only the browser leaves it available for another visit.
 
+## Desktop app
+
+`desktop/` wraps the same local app in a window (Electron) and installs like any Windows program. It brings its
+own Python and Java, so the only requirement is Minecraft 26.4-snapshot-2 installed through the launcher. On first
+start it looks in `%APPDATA%/.minecraft`; if the version is not there it asks for the Minecraft folder
+(*File → Minecraft folder…* changes it later). Saved seeds, the catalogue and the compiled engine are kept in
+`%APPDATA%/Seed Scout/data`, which updates leave alone; `desktop.log` beside it records each start.
+
+Every push to `main` that touches the app runs `.github/workflows/release.yml`: it raises the patch version in
+`desktop/package.json`, builds the installer and publishes both as a GitHub Release. An installed copy checks the
+latest release at start and every four hours, shows a notification while a new version downloads, and offers to
+restart when it is ready (*Help → Check for updates…* checks on demand). The updater reads releases without
+signing in, so it only works while the releases are public.
+
+```powershell
+cd desktop
+npm install
+npm start                                  # run from this checkout, using this machine's Python and JDK
+./vendor.ps1 -Jdk <path to a JDK 25>       # fetch embeddable Python and build the trimmed Java runtime
+npm run dist                               # build the installer into desktop/dist
+```
+
 ## Saved seeds
 
 The bookmark beside the seed number on the map, or on a found world, saves that seed. **Saved** lists

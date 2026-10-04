@@ -7,3 +7,7 @@ logs/
 saved-seeds.json
 saved-seeds.tmp
 catalogue.db
+
+desktop/node_modules/
+desktop/dist/
+desktop/vendor/

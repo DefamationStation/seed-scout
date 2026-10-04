@@ -6,7 +6,7 @@ sys.path.insert(0,str(root))
 import app
 (root/'runtime/map-bench').mkdir(parents=True,exist_ok=True)
 sandbox=pathlib.Path(tempfile.mkdtemp(prefix='http-',dir=root/'runtime/map-bench'));(sandbox/'runtime').mkdir();shutil.copytree(root/'web',sandbox/'web')
-app.ROOT=sandbox;app.SAVED=sandbox/'saved-seeds.json';app.CATALOGUE=sandbox/'catalogue.db';app.Catalogue.__init__.__defaults__=(app.CATALOGUE,)
+app.ROOT=app.DATA=sandbox;app.SAVED=sandbox/'saved-seeds.json';app.CATALOGUE=sandbox/'catalogue.db';app.Catalogue.__init__.__defaults__=(app.CATALOGUE,)
 shutil.copyfile(pathlib.Path(args.baseline_map),sandbox/'web/baseline-map.js')
 (sandbox/'web/baseline.html').write_text((sandbox/'web/index.html').read_text(encoding='utf-8').replace('/map.js','/baseline-map.js'),encoding='utf-8')
 class BenchHandler(app.Handler):

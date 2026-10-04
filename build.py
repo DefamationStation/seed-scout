@@ -1,11 +1,15 @@
 """Compile against the user's installed snapshot; no Minecraft files are distributed."""
 import json, os, pathlib, subprocess
 ROOT = pathlib.Path(__file__).resolve().parent
-GAME_HOME = pathlib.Path(os.environ['APPDATA']) / '.minecraft'
-VERSION = '26.4-snapshot-2'
-JDK = ROOT.parent / '.tools/jdk-25.0.4.1+1'
+# A checkout keeps everything in its own folder and uses this machine's tools. The desktop app sets these instead:
+# its data lives outside the install folder (which an update replaces) and it brings its own Java.
+DATA = pathlib.Path(os.environ.get('SEED_SCOUT_DATA') or ROOT)
+GAME_HOME = pathlib.Path(os.environ.get('SEED_SCOUT_MINECRAFT') or pathlib.Path(os.environ['APPDATA']) / '.minecraft')
+VERSION = os.environ.get('SEED_SCOUT_VERSION') or '26.4-snapshot-2'
+JDK = pathlib.Path(os.environ.get('SEED_SCOUT_JDK') or ROOT.parent / '.tools/jdk-25.0.4.1+1')
 def prepare():
     version_dir = GAME_HOME / 'versions' / VERSION
+    if not (version_dir / f'{VERSION}.json').exists(): raise RuntimeError(f'Minecraft {VERSION} is not installed in {GAME_HOME}')
     metadata = json.loads((version_dir / f'{VERSION}.json').read_text())
     game = version_dir / f'{VERSION}.jar'
     def allowed(lib):
@@ -20,13 +24,13 @@ def prepare():
                  for lib in metadata['libraries'] if allowed(lib) and 'artifact' in lib.get('downloads', {})]
     missing = [str(p) for p in [game, *libraries] if not p.exists()]
     if missing: raise RuntimeError('Missing installed Minecraft libraries: ' + ', '.join(missing[:3]))
-    output = ROOT / 'runtime/classes'; output.mkdir(parents=True, exist_ok=True)
+    output = DATA / 'runtime/classes'; output.mkdir(parents=True, exist_ok=True)
     cp = os.pathsep.join(map(str, [output, game, *libraries]))
     args = ['-encoding', 'UTF-8', '-cp', cp, '-d', str(output), *map(str, (ROOT/'src').glob('*.java'))]
-    argfile = ROOT / 'runtime/compile.args'
+    argfile = DATA / 'runtime/compile.args'
     argfile.write_text('\n'.join('"' + s.replace('\\', '/') + '"' for s in args), encoding='utf-8')
     subprocess.run([str(JDK/'bin/javac.exe'), '@'+str(argfile)], check=True, cwd=ROOT)
-    runargs = ROOT / 'runtime/engine.args'
+    runargs = DATA / 'runtime/engine.args'
     runargs.write_text('\n'.join('"'+s.replace('\\','/')+'"' for s in ['-Xmx6g','-cp',cp,'SeedEngine']), encoding='utf-8')
     return [str(JDK/'bin/java.exe'), '@'+str(runargs)]
 if __name__ == '__main__': print(' '.join(prepare()))

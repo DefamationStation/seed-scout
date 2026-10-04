@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>Seed Scout</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: #0b1012; color: #dfe7e4; font: 15px system-ui, "Segoe UI", sans-serif; }
+  main { text-align: center; }
+  h1 { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
+  p { margin: 0; color: #8fa19b; }
+  .bar { width: 220px; height: 3px; margin: 22px auto 0; background: #1c2629; border-radius: 2px; overflow: hidden; }
+  .bar i { display: block; width: 40%; height: 100%; background: #7fd88f; border-radius: 2px; animation: slide 1.3s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+  @media (prefers-reduced-motion: reduce) { .bar i { animation: none; width: 100%; opacity: .5; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Seed Scout</h1>
+  <p>Starting the generation engine from your Minecraft install…</p>
+  <div class="bar"><i></i></div>
+</main>
+</body>
+</html>
