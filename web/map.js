@@ -559,31 +559,42 @@ const worldMap = (() => {
       const fact = (name, value) => `<div><dt>${name}</dt><dd>${value}</dd></div>`, shape = built?.valid && built.box;
       if (shape) { selection.box = shape; invalidate(); }
       const confidence = !marker ? '' : built?.valid ? built.confidence : built ? '' : marker.confidence;
-      box.innerHTML = `${head}<dl class="facts">
-        ${fact('Block', `X ${p.x} · Z ${p.z}`)}
-        ${fact('Chunk', `${p.chunkX}, ${p.chunkZ}`)}
-        ${fact('Biome', `<i class="swatch" style="background:${terrain.colour(p.biome)}"></i>${esc(label(p.biome))}`)}
-        ${fact('Surface', `${esc(label(p.surfaceBlock || (p.water ? 'water' : 'land')))} · Y ${p.surfaceY}`)}
-        ${fact('Ground', `Y ${p.groundY}${p.water ? ' · below water' : ''}`)}
-        ${p.water ? fact('Water depth', `${p.surfaceY - p.groundY} blocks`) : ''}
-        ${(built?.portalSize || marker?.portalSize) ? fact('Portal size', (built?.portalSize || marker.portalSize) === 'huge' ? 'Huge (giant template)' : 'Regular') : ''}
-        ${(built?.placement || marker?.placement) ? fact('Placement', esc(label(built?.placement || marker.placement))) : ''}
-        ${shape ? fact('Structure', `Y ${shape.minY} to ${shape.maxY} <small>${shape.maxX - shape.minX + 1} × ${shape.maxZ - shape.minZ + 1} blocks · ${built.pieces} piece${built.pieces === 1 ? '' : 's'}</small>`) : marker ? fact(marker.kind === 'biome' ? 'Sampled at' : 'Structure Y', `Y ${marker.y}`) : ''}
-        ${fact('Nether', `X ${Math.floor(p.x / 8)} · Z ${Math.floor(p.z / 8)}`)}
-        ${fact('Slime chunk', p.slimeChunk ? '<span class="yes">Yes</span>' : 'No')}
-      </dl>
-      ${confidence ? `<p class="confidence">${icon('check-circle')}${esc(confidence)}</p>` : ''}
-      ${built && !built.valid ? '<p class="notice error">The generation point is valid, but building the structure here produced no pieces.</p>' : ''}
-      <div class="inspector-actions">
-        <button class="btn small" id="info-copy">${icon('copy')}Copy X Z</button>
-        <button class="btn small" id="info-tp">${icon('terminal')}Copy /tp</button>
-        ${marker?.source === 'pin' ? `<button class="btn small" id="info-unpin">${icon('x')}Remove pin</button>` : ''}
-      </div>
-      <p class="hint">Base terrain prediction. Spawn and completed-world details may differ.</p>`;
-      $('info-close').onclick = closeInspector;
-      $('info-copy').onclick = () => copyText(`${p.x} ${p.z}`, 'Coordinates copied');
       // A built structure comes with a block to stand in beside or inside it; anywhere else it is the block above the surface.
       const stand = (built?.valid && built.stand) || { x: p.x, y: p.surfaceY + 1, z: p.z };
+      // The card leads with where it is and the one thing worth knowing about it; the rest is under "More".
+      const biome = `<i class="swatch" style="background:${terrain.colour(p.biome)}"></i>${esc(label(p.biome))}`;
+      const setting = shape && stand.where === 'inside it' ? `Buried · Y ${shape.minY} to ${shape.maxY}`
+        : p.water ? `Under water · ${p.surfaceY - p.groundY} deep` : `Ground Y ${p.groundY}`;
+      let more = false;
+      try { more = localStorage.getItem('seed-scout-inspector-more') === '1'; } catch { }
+      box.innerHTML = `${head}
+      <p class="place"><span><b>X</b> ${p.x}</span><span><b>Y</b> ${stand.y}</span><span><b>Z</b> ${p.z}</span></p>
+      <p class="setting">${setting}<span>${biome}</span></p>
+      ${built && !built.valid ? '<p class="notice error">The generation point is valid, but building the structure here produced no pieces.</p>' : ''}
+      <div class="inspector-actions">
+        <button class="btn small" id="info-tp" title="/tp @s ${stand.x} ${stand.y} ${stand.z}">${icon('terminal')}Copy /tp</button>
+        <button class="btn small" id="info-copy">${icon('copy')}Copy X Z</button>
+        ${marker?.source === 'pin' ? `<button class="btn small" id="info-unpin">${icon('x')}Remove pin</button>` : ''}
+      </div>
+      <details class="more" id="info-more"${more ? ' open' : ''}>
+        <summary>More details<span class="chev">${icon('chevron')}</span></summary>
+        <dl class="facts">
+          ${fact('Teleport', `${stand.x} ${stand.y} ${stand.z}${stand.where ? ` <small>${esc(stand.where)}</small>` : ''}`)}
+          ${fact('Chunk', `${p.chunkX}, ${p.chunkZ}`)}
+          ${fact('Surface', `${esc(label(p.surfaceBlock || (p.water ? 'water' : 'land')))} · Y ${p.surfaceY}`)}
+          ${fact('Ground', `Y ${p.groundY}${p.water ? ' · below water' : ''}`)}
+          ${(built?.portalSize || marker?.portalSize) ? fact('Portal size', (built?.portalSize || marker.portalSize) === 'huge' ? 'Huge (giant template)' : 'Regular') : ''}
+          ${(built?.placement || marker?.placement) ? fact('Placement', esc(label(built?.placement || marker.placement))) : ''}
+          ${shape ? fact('Structure', `Y ${shape.minY} to ${shape.maxY} <small>${shape.maxX - shape.minX + 1} × ${shape.maxZ - shape.minZ + 1} blocks · ${built.pieces} piece${built.pieces === 1 ? '' : 's'}</small>`) : marker ? fact(marker.kind === 'biome' ? 'Sampled at' : 'Structure Y', `Y ${marker.y}`) : ''}
+          ${fact('Nether', `X ${Math.floor(p.x / 8)} · Z ${Math.floor(p.z / 8)}`)}
+          ${fact('Slime chunk', p.slimeChunk ? '<span class="yes">Yes</span>' : 'No')}
+        </dl>
+        ${confidence ? `<p class="confidence">${icon('check-circle')}${esc(confidence)}</p>` : ''}
+        <p class="hint">Base terrain prediction. Spawn and completed-world details may differ.</p>
+      </details>`;
+      $('info-more').ontoggle = () => { try { localStorage.setItem('seed-scout-inspector-more', $('info-more').open ? '1' : '0'); } catch { } };
+      $('info-close').onclick = closeInspector;
+      $('info-copy').onclick = () => copyText(`${p.x} ${p.z}`, 'Coordinates copied');
       $('info-tp').onclick = () => copyText(`/tp @s ${stand.x} ${stand.y} ${stand.z}`, `Teleport command copied${stand.where ? ` · ${stand.where}` : ''}`);
       if ($('info-unpin')) $('info-unpin').onclick = () => { pins.set(seed, (pins.get(seed) || []).filter(f => f.id !== marker.id)); closeInspector(); };
     } catch (e) {

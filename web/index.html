@@ -82,10 +82,12 @@
 
       <details class="group advanced">
         <summary><span data-icon="sliders"></span>Search controls<small>workers, starting seed, clustering</small><span class="chev" data-icon="chevron"></span></summary>
+        <label class="field"><span>PC usage <i id="cores-hint"></i></span><select id="usage"><option value="quiet">Quiet · leaves most of the PC free</option><option value="balanced">Balanced</option><option value="maximum">Maximum · fastest, PC may feel slow</option><option value="custom">Custom</option></select></label>
         <div class="field-row">
-          <label class="field"><span>Parallel workers <i id="cores-hint"></i></span><select id="threads"><option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option><option>12</option><option>16</option><option>20</option><option>24</option><option>28</option><option>32</option><option>48</option><option>64</option></select></label>
-          <label class="field"><span>Results to find</span><input id="maxMatches" type="number" min="1" max="100" value="10"></label>
+          <label class="field"><span>Map workers</span><select id="mapWorkers"></select></label>
+          <label class="field"><span>Search workers</span><select id="threads"><option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option><option>12</option><option>16</option><option>20</option><option>24</option><option>28</option><option>32</option><option>48</option><option>64</option></select></label>
         </div>
+        <label class="field"><span>Results to find</span><input id="maxMatches" type="number" min="1" max="100" value="10"></label>
         <label class="field"><span>Biome search</span><select id="biomeMode"><option value="terrain">Terrain-aware surface checks</option><option value="fast">Fast candidates (can miss more)</option><option value="exhaustive">Exhaustive terrain columns (slowest)</option></select></label>
         <p class="hint">Terrain-aware checks estimate the surface height at each sample, then confirm candidates on the real terrain column. Exhaustive computes the column at every sample and is several times slower. All modes sample every 32 blocks; narrow biome patches can still be missed.</p>
         <label class="field"><span>Starting seed <i>blank = random</i></span><input id="seed" type="text" inputmode="numeric" placeholder="Random 64-bit seed"></label>

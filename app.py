@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from build import ROOT, DATA, prepare
 SAVED=DATA/'saved-seeds.json'
 CATALOGUE=DATA/'catalogue.db'
+SETTINGS=DATA/'settings.json'
 TILE_POOL=ThreadPoolExecutor(48,thread_name_prefix='tile')
 
 def number(request,key):
@@ -87,7 +88,12 @@ class Engine:
             event=json.loads(line[len('SEEDSCOUT '):])
             with self.lock:
                 kind=event.get('type')
-                if kind=='ready': self.catalog=event; self.ready.set()
+                if kind=='ready':
+                    self.catalog=event
+                    # A saved map worker count replaces the engine's default of half the cores.
+                    chosen=self.settings().get('mapWorkers')
+                    if isinstance(chosen,int) and 1<=chosen<=event['cores']: self.send({'cmd':'config','mapThreads':chosen});event['mapWorkers']=chosen
+                    self.ready.set()
                 elif kind=='response':
                     waiter=self.pending.get(event['id'])
                     if waiter: waiter[1].append(event['data']); waiter[0].set()
@@ -322,6 +328,17 @@ class Engine:
         places=[tuple(int(v) for v in place.split(',')) for place in request['at'].split(';')]
         if not 1<=len(places)<=16 or any(len(place)!=2 for place in places): raise ValueError('Ask for 1–16 tiles at a time')
         return places
+    def settings(self):
+        try: return json.loads(SETTINGS.read_text(encoding='utf-8'))
+        except (OSError,ValueError): return {}
+    def configure(self,request):
+        if self.catalog is None: raise ValueError('Snapshot engine is still starting.')
+        workers=number(request,'mapWorkers')
+        if not 1<=workers<=self.catalog['cores']: raise ValueError(f"Use 1–{self.catalog['cores']} map workers.")
+        with self.lock:
+            temp=SETTINGS.with_suffix('.tmp');temp.write_text(json.dumps({**self.settings(),'mapWorkers':workers},indent=2),encoding='utf-8');os.replace(temp,SETTINGS)
+            self.send({'cmd':'config','mapThreads':workers});self.catalog['mapWorkers']=workers
+        return {'mapWorkers':workers}
     def map_request(self,request,command):
         seed=str(int(request['seed']));x,z=int(request['x']),int(request['z'])
         if not -(1<<63)<=int(seed)<(1<<63) or max(abs(x),abs(z))>29980000: raise ValueError('Invalid map coordinates or seed')
@@ -464,6 +481,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/structure': result=self.server.engine.structure(request)
             elif self.path=='/api/saved': result=self.server.engine.save_seed(request)
             elif self.path=='/api/saved-delete': result=self.server.engine.forget_seed(request)
+            elif self.path=='/api/config': result=self.server.engine.configure(request)
             elif self.path=='/api/catalogue-delete': self.server.engine.catalogue.delete(int(request['id']));result={'finds':self.server.engine.catalogue.listing()}
             elif self.path=='/api/catalogue-import': result=self.server.engine.catalogue_import(request)
             elif self.path=='/api/export':

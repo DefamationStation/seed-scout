@@ -7,6 +7,16 @@ DATA = pathlib.Path(os.environ.get('SEED_SCOUT_DATA') or ROOT)
 GAME_HOME = pathlib.Path(os.environ.get('SEED_SCOUT_MINECRAFT') or pathlib.Path(os.environ['APPDATA']) / '.minecraft')
 VERSION = os.environ.get('SEED_SCOUT_VERSION') or '26.4-snapshot-2'
 JDK = pathlib.Path(os.environ.get('SEED_SCOUT_JDK') or ROOT.parent / '.tools/jdk-25.0.4.1+1')
+def engine_memory():
+    """Half of this machine's memory for the engine, between 2 and 6 GB."""
+    try:
+        import ctypes
+        class Status(ctypes.Structure):
+            _fields_ = [('length', ctypes.c_ulong), ('load', ctypes.c_ulong)] + [(n, ctypes.c_ulonglong) for n in ('total', 'available', 'totalPage', 'availablePage', 'totalVirtual', 'availableVirtual', 'extended')]
+        status = Status(); status.length = ctypes.sizeof(Status)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+        return max(2, min(6, status.total // (2 << 30)))
+    except (AttributeError, OSError): return 6
 def prepare():
     version_dir = GAME_HOME / 'versions' / VERSION
     if not (version_dir / f'{VERSION}.json').exists(): raise RuntimeError(f'Minecraft {VERSION} is not installed in {GAME_HOME}')
@@ -31,6 +41,6 @@ def prepare():
     argfile.write_text('\n'.join('"' + s.replace('\\', '/') + '"' for s in args), encoding='utf-8')
     subprocess.run([str(JDK/'bin/javac.exe'), '@'+str(argfile)], check=True, cwd=ROOT)
     runargs = DATA / 'runtime/engine.args'
-    runargs.write_text('\n'.join('"'+s.replace('\\','/')+'"' for s in ['-Xmx6g','-cp',cp,'SeedEngine']), encoding='utf-8')
+    runargs.write_text('\n'.join('"'+s.replace('\\','/')+'"' for s in [f'-Xmx{engine_memory()}g','-cp',cp,'SeedEngine']), encoding='utf-8')
     return [str(JDK/'bin/java.exe'), '@'+str(runargs)]
 if __name__ == '__main__': print(' '.join(prepare()))

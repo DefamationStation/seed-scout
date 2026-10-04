@@ -120,6 +120,20 @@ const chosen = new Map();
 let catalog = null, kind = 'structure', state = {}, selectedSeed = null, manualResults = [], resultsSignature = null, toastTimer = 0;
 const fields = ['anchor', 'radius', 'x', 'z', 'threads', 'seed', 'limit', 'maxMatches', 'cluster', 'biomeMode'];
 
+// PC usage presets: the share of the logical cores given to searches and to map tiles.
+const WORKER_STEPS = [1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 48, 64];
+const USAGE = { quiet: [1 / 8, 1 / 8], balanced: [1 / 4, 1 / 4], maximum: [7 / 8, 1 / 2] };
+const nearestStep = (target, cores) => WORKER_STEPS.filter(n => n <= Math.max(1, Math.min(cores, target))).pop() || 1;
+const usagePlan = name => { const cores = catalog?.cores || 8, [search, map] = USAGE[name]; return { threads: nearestStep(cores * search, cores), mapWorkers: Math.max(Math.min(2, cores), nearestStep(cores * map, cores)) }; };
+// The preset whose numbers match the two selects, or "custom".
+function showUsage() {
+  const now = `${$('threads').value}/${$('mapWorkers').value}`;
+  $('usage').value = Object.keys(USAGE).find(name => { const plan = usagePlan(name); return `${plan.threads}/${plan.mapWorkers}` === now; }) || 'custom';
+}
+async function setMapWorkers(count) {
+  try { const saved = await api('/api/config', { mapWorkers: +count }); if (catalog) catalog.mapWorkers = saved.mapWorkers; }
+  catch (e) { toast(e.message, true); }
+}
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 function toast(message, error = false) {
   const el = $('toast'); el.textContent = message; el.classList.toggle('error', error); el.hidden = false;
@@ -332,6 +346,14 @@ $('chosen').onclick = e => {
     renderChosen(); save();
   }
 };
+$('usage').addEventListener('change', () => {
+  if ($('usage').value === 'custom') return showUsage();
+  const plan = usagePlan($('usage').value);
+  $('threads').value = String(plan.threads); $('mapWorkers').value = String(plan.mapWorkers);
+  save(); setMapWorkers(plan.mapWorkers);
+});
+$('mapWorkers').addEventListener('change', () => { showUsage(); setMapWorkers($('mapWorkers').value); });
+$('threads').addEventListener('change', showUsage);
 for (const f of fields) $(f).addEventListener('change', () => {
   if (f === 'radius') { for (const entry of chosen.values()) { entry.radius = Number($('radius').value); entry.minRadius = Math.min(entry.minRadius, entry.radius - 32); } renderChosen(); }
   syncAnchor(); save();
@@ -754,6 +776,9 @@ async function poll() {
     $('threads').innerHTML = [1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 48, 64].filter(n => n <= Math.max(8, cores)).map(n => `<option>${n}</option>`).join('');
     $('threads').value = [...$('threads').options].some(o => o.value === workers) ? workers : '4';
     $('cores-hint').textContent = `${cores} cores`;
+    $('mapWorkers').innerHTML = WORKER_STEPS.filter(n => n <= cores).map(n => `<option>${n}</option>`).join('');
+    $('mapWorkers').value = String(nearestStep(catalog.mapWorkers || 2, cores));
+    showUsage();
     if (catalog.version) $('version').textContent = `Java ${catalog.version.replace('-snapshot-', ' Snapshot ')}`;
     $('nearest-feature').innerHTML = [['structure', catalog.sets], ['biome', catalog.biomes]].map(([k, keys]) => `<optgroup label="${k === 'structure' ? 'Structures' : 'Biomes'}">${[...keys].sort((a, b) => label(a).localeCompare(label(b))).map(key => `<option value="${k}:${esc(key)}">${esc(label(key))}</option>`).join('')}</optgroup>`).join('');
     // The structure layers are now known, so the map can start filling them in.

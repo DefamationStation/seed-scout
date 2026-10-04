@@ -11,3 +11,5 @@ catalogue.db
 desktop/node_modules/
 desktop/dist/
 desktop/vendor/
+settings.json
+settings.tmp

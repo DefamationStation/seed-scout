@@ -56,7 +56,7 @@ public final class SeedEngine {
     static final int CORES=Runtime.getRuntime().availableProcessors();
     // Tile generation scales with threads; half the cores keeps the map quick and still leaves room for a running search.
     static final int MAP_THREADS=Math.clamp(CORES/2,2,16);
-    static final ExecutorService MAP_WORKERS=new ThreadPoolExecutor(MAP_THREADS,MAP_THREADS,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(512),r->{var t=new Thread(r,"map-tile");t.setDaemon(true);return t;});
+    static final ThreadPoolExecutor MAP_WORKERS=new ThreadPoolExecutor(MAP_THREADS,MAP_THREADS,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(512),r->{var t=new Thread(r,"map-tile");t.setDaemon(true);return t;});
     static final ThreadLocal<Map<Long,RandomState>> MAP_STATES=ThreadLocal.withInitial(()->new LinkedHashMap<>(4,.75f,true){protected boolean removeEldestEntry(Map.Entry<Long,RandomState> e){return size()>3;}});
     // The structure state carries the world origin and, once asked for, the stronghold ring positions.
     static final ThreadLocal<Map<Long,ChunkGeneratorStructureState>> MAP_STRUCTURES=ThreadLocal.withInitial(()->new LinkedHashMap<>(4,.75f,true){protected boolean removeEldestEntry(Map.Entry<Long,ChunkGeneratorStructureState> e){return size()>3;}});
@@ -113,6 +113,12 @@ public final class SeedEngine {
                 String command=request.has("cmd")?request.get("cmd").getAsString():"inspect";
             if(command.equals("start")) { if(active!=null && active.finished.get()<active.threads)throw new IllegalStateException("Stop the current search first"); active=new Job(request); active.start(); }
                 else if(command.equals("stop")) { if(active!=null)active.running.set(false); }
+                else if(command.equals("config")) {
+                    // The pool grows by raising the maximum first and shrinks by lowering the core size first.
+                    int threads=Math.clamp(request.get("mapThreads").getAsInt(),1,CORES);
+                    if(threads>MAP_WORKERS.getMaximumPoolSize()){MAP_WORKERS.setMaximumPoolSize(threads);MAP_WORKERS.setCorePoolSize(threads);}
+                    else{MAP_WORKERS.setCorePoolSize(threads);MAP_WORKERS.setMaximumPoolSize(threads);}
+                }
                 else if(List.of("tile","point","scan","structures","structure").contains(command)) { final var tileRequest=request;MAP_WORKERS.execute(()->{try{emit(Map.of("type","response","id",tileRequest.get("id").getAsLong(),"data",switch(command){case "point"->point(tileRequest);case "scan"->scan(tileRequest);case "structures"->structures(tileRequest);case "structure"->structure(tileRequest);default->tile(tileRequest);}));}catch(Throwable e){emit(Map.of("type","error","id",tileRequest.get("id").getAsLong(),"message",e.toString()));}}); }
                 else emit(Map.of("type","response","id",request.get("id").getAsLong(),"data",inspect(request)));
             }
