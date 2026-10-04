@@ -214,6 +214,10 @@ class Engine:
             if 'note' in request:
                 entry['note']=str(request['note'])
                 if len(entry['note'])>4000: raise ValueError('Notes are limited to 4,000 characters.')
+            if 'tags' in request:
+                tags=request['tags']
+                if not isinstance(tags,list) or len(tags)>10 or any(not isinstance(t,str) or not 1<=len(t.strip())<=24 for t in tags): raise ValueError('Use up to 10 tags of 1–24 characters.')
+                entry['tags']=list(dict.fromkeys(t.strip().lower() for t in tags))
             if 'result' in request:
                 # The search result as found, so the matches come back as markers when the seed is reopened.
                 result=request['result']

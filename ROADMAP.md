@@ -53,6 +53,11 @@ What comes next for Seed Scout, in the order it is planned. Items are specific t
 - **The last seed and view come back** when the app opens.
 - **Approximate height on overview zooms** in the status bar, marked with ≈.
 
+- **Tags and a filter for saved seeds.** Each saved seed takes up to ten tags; the list filters by tag, note,
+  seed or feature.
+- **Copy a seed card.** One button copies a text card: seed, version, spawn, feature coordinates, tags and
+  notes. An image card is not done.
+
 ## Next
 
 ### Templates and variants
@@ -64,22 +69,17 @@ What comes next for Seed Scout, in the order it is planned. Items are specific t
 
 2. **Marker clustering** at wide zooms, in place of overlapping dots.
 
-### Saved seeds
-
-3. **Tags and a filter**, in addition to free-text notes.
-4. **Export a seed as a card** (image or text): seed, version and key coordinates.
-
 ### Housekeeping
 
-5. **Settings in one place.** PC usage is inside Search controls, the Minecraft folder in the File menu and
+3. **Settings in one place.** PC usage is inside Search controls, the Minecraft folder in the File menu and
     updates in Help; one settings panel for all three.
-6. **Teleport you can trust.** The standing spot is computed from terrain and piece boxes, not placed blocks.
+4. **Teleport you can trust.** The standing spot is computed from terrain and piece boxes, not placed blocks.
     Check every structure type in a real world, fix the ones that land inside a block, and add a safe variant
     (a few blocks up, with slow falling) for the types that stay uncertain.
-7. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
+5. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
     Supporting ones where it does not means moving the engine's version-specific calls behind one small layer
     per version. This needs a second, different version installed to build and test against.
-8. **The 200-block scale.** Still the slowest view, and three attempts did not change that, so it is parked:
+6. **The 200-block scale.** Still the slowest view, and three attempts did not change that, so it is parked:
     - a whole tile computed over a slice of the height range matched the game but was no faster (14.8 against
       13.7 ms per tile);
     - accepting open-ocean columns without the aquifer pass gained 3–5% and got about 400 sea-floor heights

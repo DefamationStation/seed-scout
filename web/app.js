@@ -588,7 +588,7 @@ $('results').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.ta
 // ---- Saved seeds ---------------------------------------------------------
 // Kept on disk by the app (saved-seeds.json), so they survive closing the browser: the seed, a note,
 // the search result it came from and the map position it was saved at.
-let savedSeeds = [], noteTimer = 0;
+let savedSeeds = [], noteTimer = 0, savedTag = '';
 const savedEntry = seed => savedSeeds.find(s => s.seed === seed);
 async function loadSaved() {
   try { savedSeeds = (await (await fetch('/api/saved')).json()).seeds || []; } catch { }
@@ -614,18 +614,42 @@ async function openSaved(entry) {
     if (narrow()) openPanel('map');
   } catch (e) { toast(e.message, true); }
 }
+// Everything worth passing on about a saved seed, as plain text for a message or a notes file.
+function seedCard(entry) {
+  const r = entry.result, version = r?.version || catalog?.version || '';
+  return [`Minecraft seed ${entry.seed}${version ? ` · ${versionName(version)}` : ''}`,
+    r ? `Spawn: X ${r.spawnX}, Z ${r.spawnZ}` : '',
+    ...(r?.features || []).map(f => `${label(f.key)}${builtFact(f) ? ` (${builtFact(f).toLowerCase()})` : ''}: X ${f.x}, Y ${f.y}, Z ${f.z} · ${fmt(f.distance)} blocks from ${f.near ? `the ${label(f.near.key).toLowerCase()}` : 'the origin'}`),
+    entry.view ? `Saved view: X ${Math.round(entry.view.x)}, Z ${Math.round(entry.view.z)}` : '',
+    entry.tags?.length ? `Tags: ${entry.tags.join(', ')}` : '',
+    entry.note?.trim() ? `Notes: ${entry.note.trim()}` : '',
+    'Found with Seed Scout'].filter(Boolean).join('\n');
+}
+function savedMatches(entry) {
+  const words = $('saved-search').value.trim().toLowerCase();
+  if (savedTag && !(entry.tags || []).includes(savedTag)) return false;
+  if (!words) return true;
+  const text = [entry.seed, entry.note || '', ...(entry.tags || []), ...(entry.result?.features || []).map(f => label(f.key))].join(' ').toLowerCase();
+  return words.split(/\s+/).every(word => text.includes(word));
+}
 function renderSaved() {
   const open = worldMap.seed();
+  const tags = [...new Set(savedSeeds.flatMap(s => s.tags || []))].sort();
+  if (savedTag && !tags.includes(savedTag)) savedTag = '';
+  $('saved-filter').hidden = savedSeeds.length < 4 && !tags.length;
+  $('saved-tags').innerHTML = tags.map(t => `<button class="tag ${t === savedTag ? 'active' : ''}" data-filter-tag="${esc(t)}">${esc(t)}</button>`).join('');
+  const shown = savedSeeds.filter(savedMatches);
   $('saved-badge').hidden = !savedSeeds.length; $('saved-badge').textContent = savedSeeds.length;
   $('save-current').hidden = !open || !!savedEntry(open);
   $('chip-save').classList.toggle('active', !!savedEntry(open));
   $('chip-save').title = savedEntry(open) ? 'Saved. Show it in Saved seeds' : 'Save this seed with notes';
-  $('saved-list').innerHTML = savedSeeds.map(s => `<article class="result saved ${s.seed === open ? 'active' : ''}" data-saved="${esc(s.seed)}">
-      <div class="result-top"><code>${esc(s.seed)}</code><span class="card-actions"><button class="icon-btn" data-copy="${esc(s.seed)}" title="Copy seed" aria-label="Copy seed">${icon('copy')}</button><button class="icon-btn" data-forget title="Remove from saved seeds" aria-label="Remove from saved seeds">${icon('trash')}</button><button class="btn small primary" data-restore>${s.seed === open ? 'Go to saved view' : 'Open'}</button></span></div>
+  $('saved-list').innerHTML = shown.map(s => `<article class="result saved ${s.seed === open ? 'active' : ''}" data-saved="${esc(s.seed)}">
+      <div class="result-top"><code>${esc(s.seed)}</code><span class="card-actions"><button class="icon-btn" data-copy="${esc(s.seed)}" title="Copy seed" aria-label="Copy seed">${icon('copy')}</button><button class="icon-btn" data-card title="Copy a text card: seed, version, coordinates, tags and notes" aria-label="Copy a text card for this seed">${icon('download')}</button><button class="icon-btn" data-forget title="Remove from saved seeds" aria-label="Remove from saved seeds">${icon('trash')}</button><button class="btn small primary" data-restore>${s.seed === open ? 'Go to saved view' : 'Open'}</button></span></div>
       ${s.result?.features?.length ? `<div class="chips">${s.result.features.map(f => `<span class="chip">${featureChip(f)}</span>`).join('')}</div>` : ''}
+      <div class="tags">${(s.tags || []).map(t => `<span class="tag">${esc(t)}<button data-untag="${esc(t)}" aria-label="Remove tag ${esc(t)}">×</button></span>`).join('')}<input data-tag maxlength="24" placeholder="+ tag" aria-label="Add a tag to seed ${esc(s.seed)}"></div>
       <textarea data-note rows="3" maxlength="4000" placeholder="Notes: why this seed, where to build, what to visit…" aria-label="Notes for seed ${esc(s.seed)}">${esc(s.note || '')}</textarea>
       <div class="result-meta"><span>Saved ${esc(s.saved || '')}${s.view ? ` · view at X ${Math.round(s.view.x)}, Z ${Math.round(s.view.z)}` : ''}</span>${s.seed === open ? '<button class="link" data-reposition>Save current view</button>' : ''}<em data-state></em></div>
-    </article>`).join('') || `<div class="empty">${icon('bookmark')}<h4>No saved seeds yet</h4><p>Open a seed and press the bookmark next to its number, or use the bookmark on a found world.</p></div>`;
+    </article>`).join('') || (savedSeeds.length ? `<div class="empty">${icon('search')}<h4>No saved seed matches</h4><p>Clear the filter to see all ${savedSeeds.length}.</p></div>` : '') || `<div class="empty">${icon('bookmark')}<h4>No saved seeds yet</h4><p>Open a seed and press the bookmark next to its number, or use the bookmark on a found world.</p></div>`;
 }
 async function saveNote(card) {
   const seed = card.dataset.saved, state = card.querySelector('[data-state]');
@@ -637,10 +661,24 @@ $('saved-list').oninput = e => {
   card.querySelector('[data-state]').textContent = 'Saving…';
   clearTimeout(noteTimer); noteTimer = setTimeout(() => saveNote(card), 700);
 };
+async function setTags(entry, tags) {
+  try { savedSeeds = (await api('/api/saved', { seed: entry.seed, tags })).seeds; renderSaved(); }
+  catch (e) { toast(e.message, true); }
+}
+$('saved-list').onkeydown = e => {
+  if (e.key !== 'Enter' || !e.target.matches('[data-tag]')) return;
+  e.preventDefault();
+  const entry = savedEntry(e.target.closest('[data-saved]').dataset.saved), tag = e.target.value.trim().toLowerCase();
+  if (tag) setTags(entry, [...new Set([...(entry.tags || []), tag])]).then(() => document.querySelector(`[data-saved="${CSS.escape(entry.seed)}"] [data-tag]`)?.focus());
+};
+$('saved-search').oninput = renderSaved;
+$('saved-tags').onclick = e => { const tag = e.target.closest('[data-filter-tag]'); if (!tag) return; savedTag = savedTag === tag.dataset.filterTag ? '' : tag.dataset.filterTag; renderSaved(); };
 $('saved-list').onclick = async e => {
   const card = e.target.closest('[data-saved]'); if (!card) return;
-  const entry = savedEntry(card.dataset.saved), copy = e.target.closest('[data-copy]'), forget = e.target.closest('[data-forget]');
+  const entry = savedEntry(card.dataset.saved), copy = e.target.closest('[data-copy]'), forget = e.target.closest('[data-forget]'), untag = e.target.closest('[data-untag]');
   if (copy) return copyText(copy.dataset.copy, 'Seed copied');
+  if (untag) return setTags(entry, (entry.tags || []).filter(t => t !== untag.dataset.untag));
+  if (e.target.closest('[data-card]')) return copyText(seedCard(entry), 'Seed card copied');
   if (e.target.closest('[data-restore]')) return openSaved(entry);
   try {
     if (e.target.closest('[data-reposition]')) { savedSeeds = (await api('/api/saved', { seed: entry.seed, view: worldMap.view() })).seeds; renderSaved(); toast('Saved view updated'); }
