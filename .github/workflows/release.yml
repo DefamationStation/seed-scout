@@ -1,8 +1,8 @@
 name: Release desktop app
 
 # Every change to the app on main becomes a new version: the version number goes up by one patch step,
-# the Windows installer is built, and both are published as a GitHub Release. Installed copies look at
-# the latest release and update themselves from it.
+# the Windows installer is built and published as a GitHub Release, and the update feed is pointed at it.
+# Installed copies read the feed (latest.yml on the update-feed branch) and update themselves from the release.
 on:
   push:
     branches: [main]
@@ -66,10 +66,33 @@ jobs:
       - name: Build the installer
         run: npx electron-builder --win --publish never
 
-      # latest.yml is what installed copies read to learn that a new version exists.
+      # The release holds only the installer, so there is one obvious file to download.
       - name: Publish the release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "v${{ steps.version.outputs.version }}"             dist/*.exe dist/*.exe.blockmap dist/latest.yml             --target "$(git rev-parse HEAD)"             --title "Seed Scout ${{ steps.version.outputs.version }}"             --generate-notes --latest
+          gh release create "v$VERSION" dist/*.exe --target "$(git rev-parse HEAD)" --title "Seed Scout $VERSION" --generate-notes --latest
+
+      # The feed is published after the release, so it never names an installer that is not there yet.
+      # It lives on its own branch with the installer's full address in it.
+      - name: Point the update feed at the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          base="https://github.com/${{ github.repository }}/releases/download/v$VERSION"
+          feed="$RUNNER_TEMP/update-feed"
+          mkdir -p "$feed"
+          sed -E "s#^(\s*-? ?(url|path)): (Seed-Scout-Setup)#\1: $base/\3#" dist/latest.yml > "$feed/latest.yml"
+          cat "$feed/latest.yml"
+          grep -q "url: $base/" "$feed/latest.yml"
+          cd "$feed"
+          git init -q -b update-feed
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest.yml
+          git commit -q -m "Seed Scout $VERSION"
+          git push --force "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git" update-feed

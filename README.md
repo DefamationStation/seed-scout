@@ -66,10 +66,11 @@ start it looks in `%APPDATA%/.minecraft`; if the version is not there it asks fo
 `%APPDATA%/Seed Scout/data`, which updates leave alone; `desktop.log` beside it records each start.
 
 Every push to `main` that touches the app runs `.github/workflows/release.yml`: it raises the patch version in
-`desktop/package.json`, builds the installer and publishes both as a GitHub Release. An installed copy checks the
-latest release at start and every four hours, shows a notification while a new version downloads, and offers to
-restart when it is ready (*Help → Check for updates…* checks on demand). The updater reads releases without
-signing in, so it only works while the releases are public.
+`desktop/package.json`, builds the installer and publishes it as a GitHub Release, then writes the update feed
+(`latest.yml` on the `update-feed` branch) with the installer's address and checksum. An installed copy reads
+that feed at start and every four hours, shows a notification while a new version downloads, and offers to
+restart when it is ready (*Help → Check for updates…* checks on demand). Both are read without signing in,
+so updates only work while the repository is public.
 
 ```powershell
 cd desktop
@@ -306,3 +307,7 @@ Map loading streams each completed tile and abandons obsolete browser requests a
 Controlled measurements show about 25% less waiting for the first detailed tile, with complete-view
 terrain time essentially unchanged. See [MAP-PERFORMANCE.md](MAP-PERFORMANCE.md) for measurements,
 limitations and reproduction. Saved search worker counts above eight also survive page reloads.
+
+## Licence
+
+MIT; see `LICENSE`. Minecraft itself is not part of this project and is not distributed with it.

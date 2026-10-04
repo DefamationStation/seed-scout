@@ -61,13 +61,13 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "artifactName": "Seed-Scout-Setup-${version}.${ext}"
+      "artifactName": "Seed-Scout-Setup-${version}.${ext}",
+      "differentialPackage": false
     },
     "publish": {
-      "provider": "github",
-      "owner": "DefamationStation",
-      "repo": "seed-scout",
-      "releaseType": "release"
+      "provider": "generic",
+      "url": "https://raw.githubusercontent.com/DefamationStation/seed-scout/update-feed"
     }
-  }
+  },
+  "license": "MIT"
 }
