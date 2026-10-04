@@ -30,4 +30,6 @@ const chooser=app.slice(app.indexOf('function openSubcategories('),app.indexOf('
 context.renderSubcategories=()=>{};
 vm.runInNewContext(chooser+'\nopenSubcategories("huge_ruined_portals","find");',context);
 assert.equal(condition.radius,200);assert.equal(condition.minRadius,100);
+// Rows are collapsed to one line unless open: with no fields on the page the stored condition is what is sent.
+inputs=[];request=context.buildRequest();assert.equal(request.features[0].radius,200);assert.equal(request.features[0].minRadius,100);
 console.log('Pending distance/count edits reach requests and survive subcategory changes.');

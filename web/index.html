@@ -52,87 +52,64 @@
           <button type="button" data-search-mode="world"><span data-icon="map"></span>Inside one seed</button>
         </div>
         <div class="world-only" id="world-fields">
-          <label class="field"><span>Seed to search inside</span><input id="world-seed" type="text" inputmode="numeric" placeholder="Seed number" aria-label="Seed to search inside"></label>
           <div class="field-row">
+            <label class="field"><span>Seed to search inside</span><input id="world-seed" type="text" inputmode="numeric" placeholder="Seed number" aria-label="Seed to search inside"></label>
             <label class="field"><span>Search out to</span><select id="world-range"><option value="10000">10,000 blocks</option><option value="100000">100,000 blocks</option><option value="1000000">1,000,000 blocks</option><option value="29999984" selected>The whole world</option></select></label>
-            <label class="field"><span>Stop after</span><span class="with-unit"><input id="world-max" type="number" min="1" max="500" value="50"><i>places</i></span></label>
           </div>
-          <p class="hint" id="world-hint"></p>
         </div>
-      </div>
-      <div class="group">
-        <h3 id="origin-title">Search around</h3>
-        <input type="hidden" id="anchor" value="spawn">
-        <div class="segmented" role="group" aria-label="Search origin">
-          <button type="button" data-anchor="spawn"><span data-icon="spawn"></span>World spawn</button>
-          <button type="button" data-anchor="custom"><span data-icon="crosshair"></span>Coordinates</button>
-        </div>
+        <label class="field inline"><span id="origin-title">Around</span><select id="anchor" class="origin-pick" aria-label="Search origin"><option value="spawn">World spawn</option><option value="custom">Coordinates</option></select></label>
         <div id="coordinates" class="field-row" hidden>
           <label class="field"><span>X</span><input id="x" type="number" value="0"></label>
           <label class="field"><span>Z</span><input id="z" type="number" value="0"></label>
         </div>
-        <div class="spawn-rules seeds-only">
-          <label class="field"><span>Spawn biome</span><select id="spawn-biome-mode" aria-label="Spawn biome rule"><option value="any">Any biome</option><option value="in">Spawn in one of…</option><option value="not">Do not spawn in…</option></select></label>
-          <div id="spawn-biome-pick" hidden>
-            <div class="chips" id="spawn-biome-list"></div>
-            <select id="spawn-biome-add" aria-label="Add a spawn biome"></select>
-          </div>
-          <label class="field"><span>Biomes nearby</span><select id="nearby-biome-add" aria-label="Add a biome that must be near the spawn"></select></label>
-          <div class="chips" id="nearby-biome-list"></div>
-          <p class="hint" id="nearby-biome-hint" hidden>Each has its own distance under Conditions, further down.</p>
-          <div class="criterion-rule slime-rule"><span>At least</span><input id="slime-count" type="number" min="0" max="289" value="0" aria-label="Slime chunks wanted"><span>slime chunks within</span><input id="slime-radius" type="number" min="1" max="8" value="5" aria-label="Chunks from the origin"><span>chunks <i>0 = off</i></span></div>
-        </div>
-        <label class="field inline"><span>Default distance</span><span class="with-unit"><input id="radius" type="number" min="32" max="8000" step="100" value="1000"><i>blocks</i></span></label>
       </div>
 
-      <div class="group">
-        <div class="group-title"><h3>Features</h3><span class="count" id="selection-count">0 selected</span></div>
-        <div class="presets" aria-label="Presets">
-          <span id="saved-presets"></span>
-          <button id="condition-preset-save" class="add" title="Keep the current conditions as a preset">+ Save current</button>
+      <div class="group" id="criteria-group">
+        <div class="group-title"><h3>What you want</h3><span class="count" id="selection-count" hidden></span>
+          <details class="menu" id="preset-menu">
+            <summary class="link">Presets<span data-icon="chevron"></span></summary>
+            <div class="menu-body">
+              <div id="saved-presets"></div>
+              <button type="button" id="condition-preset-save">Save current as a preset…</button>
+            </div>
+          </details>
         </div>
         <form class="preset-name" id="condition-preset-form" hidden>
           <input id="condition-preset-name" type="text" maxlength="40" placeholder="Name these conditions" aria-label="Preset name">
           <button class="btn small primary" type="submit">Save preset</button>
           <button class="btn small" type="button" id="condition-preset-cancel">Cancel</button>
         </form>
-        <div class="tabs">
-          <button class="active" data-kind="structure">Structures</button>
-          <button data-kind="biome">Biomes</button>
-          <button data-kind="terrain">Landscape</button>
-        </div>
-        <div class="search-field" id="filter-field"><span data-icon="search"></span><input id="filter" type="search" placeholder="Filter features…" aria-label="Filter features"></div>
-        <div id="features" class="feature-grid"><div class="loading">Starting the snapshot engine…</div></div>
-        <p class="hint" id="kind-hint">Structures are confirmed with Minecraft’s own generation-start checks.</p>
-      </div>
-
-      <div class="group" id="criteria-group">
-        <h3>Conditions</h3>
         <div id="chosen" class="chosen"></div>
+        <p class="hint world-only" id="world-hint"></p>
+        <button type="button" class="btn block add-condition" id="add-condition" aria-expanded="false" aria-controls="picker"><span data-icon="plus"></span>Add a condition</button>
+        <div class="picker" id="picker" hidden>
+          <div class="tabs">
+            <button class="active" data-kind="structure">Structures</button>
+            <button data-kind="biome">Biomes</button>
+            <button data-kind="terrain">Landscape</button>
+            <button data-kind="spawn" class="seeds-only">Spawn</button>
+          </div>
+          <div class="search-field" id="filter-field"><span data-icon="search"></span><input id="filter" type="search" placeholder="Search everything…" aria-label="Search structures, biomes and landscape"></div>
+          <div id="features" class="feature-grid"><div class="loading">Starting the snapshot engine…</div></div>
+          <div class="picker-foot"><p class="hint" id="kind-hint"></p><button type="button" class="btn small" id="picker-done">Done</button></div>
+        </div>
       </div>
 
-      <details class="group advanced seeds-only">
-        <summary><span data-icon="sliders"></span>Search controls<small>results, starting seed, clustering</small><span class="chev" data-icon="chevron"></span></summary>
-        <label class="field"><span>Results to find</span><input id="maxMatches" type="number" min="1" max="100" value="10"></label>
-        <label class="field"><span>Biome search</span><select id="biomeMode"><option value="terrain">Terrain-aware surface checks</option><option value="fast">Fast candidates (can miss more)</option><option value="exhaustive">Exhaustive terrain columns (slowest)</option></select></label>
-        <p class="hint">Terrain-aware checks estimate the surface height at each sample, then confirm candidates on the real terrain column. Exhaustive computes the column at every sample and is several times slower. All modes sample every 32 blocks; narrow biome patches can still be missed.</p>
-        <label class="field"><span>Starting seed <i>blank = random</i></span><input id="seed" type="text" inputmode="numeric" placeholder="Random 64-bit seed"></label>
-        <div class="field-row">
+      <details class="group advanced" id="options">
+        <summary><span data-icon="sliders"></span>Options<small id="options-summary"></small><span class="chev" data-icon="chevron"></span></summary>
+        <div class="field-row seeds-only">
+          <label class="field"><span>Results to find</span><input id="maxMatches" type="number" min="1" max="100" value="10"></label>
           <label class="field"><span>Seed budget</span><input id="limit" type="number" min="1" max="10000000" value="1000000"></label>
-          <label class="field"><span>Max gap <i>0 = off</i></span><input id="cluster" type="number" min="0" max="16000" value="0"></label>
         </div>
-        <p class="hint">Max gap is the largest distance allowed between matches. It checks the nearest matches found and can miss a different valid grouping.</p>
-        <label class="field inline"><span>Leeway <i>0 = exact only</i></span><span class="with-unit"><input id="leeway" type="number" min="0" max="100" step="5" value="0"><i>%</i></span></label>
-        <p class="hint">With a leeway, results that miss a distance or a landscape threshold by up to this much are listed too, marked as close and after the exact ones. If a search finds nothing, a leeway shows whether anything comes near or the conditions cannot be met.</p>
-      </details>
-
-      <details class="group advanced seeds-only">
-        <summary><span data-icon="check-circle"></span>Check a seed you already have<span class="chev" data-icon="chevron"></span></summary>
-        <div class="input-action">
-          <input id="inspect-seed" type="text" inputmode="numeric" placeholder="Numeric seed" aria-label="Seed to check">
-          <button id="inspect" class="btn" disabled>Check</button>
-        </div>
-        <p class="hint">Tests the seed against the conditions above and opens it on the map if it matches.</p>
+        <label class="field seeds-only"><span>Starting seed <i>blank = random</i></span><input id="seed" type="text" inputmode="numeric" placeholder="Random 64-bit seed"></label>
+        <label class="field inline world-only"><span>Stop after</span><span class="with-unit"><input id="world-max" type="number" min="1" max="500" value="50"><i>places</i></span></label>
+        <label class="field inline"><span>Leeway <i>0 = exact only</i><i class="help" tabindex="0" data-tip="With a leeway, results that miss a distance or a landscape threshold by up to this much are listed too, marked as close and after the exact ones. If a search finds nothing, a leeway shows whether anything comes near or the conditions cannot be met.">?</i></span><span class="with-unit"><input id="leeway" type="number" min="0" max="100" step="5" value="0"><i>%</i></span></label>
+        <h4 class="sub-title">Fine tuning</h4>
+        <label class="field inline"><span>Distance for new conditions</span><span class="with-unit"><input id="radius" type="number" min="32" max="8000" step="100" value="1000"><i>blocks</i></span></label>
+        <label class="field inline"><span>Max gap <i>0 = off</i><i class="help" tabindex="0" data-tip="The largest distance allowed between the matches. It checks the nearest matches found and can miss a different valid grouping.">?</i></span><span class="with-unit"><input id="cluster" type="number" min="0" max="16000" value="0"><i>blocks</i></span></label>
+        <label class="field"><span>Biome search<i class="help" tabindex="0" data-tip="Terrain-aware checks estimate the surface height at each sample, then confirm candidates on the real terrain column. Exhaustive computes the column at every sample and is several times slower. All modes sample every 32 blocks; narrow biome patches can still be missed.">?</i></span><select id="biomeMode"><option value="terrain">Terrain-aware surface checks</option><option value="fast">Fast candidates (can miss more)</option><option value="exhaustive">Exhaustive terrain columns (slowest)</option></select></label>
+        <label class="field seeds-only"><span>Check one seed<i class="help" tabindex="0" data-tip="Tests the seed against the conditions above and opens it on the map if it matches.">?</i></span>
+          <span class="input-action"><input id="inspect-seed" type="text" inputmode="numeric" placeholder="Numeric seed" aria-label="Seed to check"><button id="inspect" class="btn" type="button" disabled>Check</button></span></label>
       </details>
     </div>
     <div class="pane-foot">

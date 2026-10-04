@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Seed Scout stands after 0.1.23 and what comes next. The plan is short on purpose: a few target wins, in
+Where Seed Scout stands after 0.1.24 and what comes next. The plan is short on purpose: a few target wins, in
 order, each with what "done" looks like.
 
 ## Shipped so far
@@ -27,6 +27,7 @@ order, each with what "done" looks like.
 | 0.1.21 | A picker for biomes to have near the spawn, beside the spawn biome |
 | 0.1.22 | Landscape conditions: biome coverage, flat ground, high ground and a river (length, width, straightness), ranked by fit |
 | 0.1.23 | Leeway: near misses listed as close, with what they missed |
+| 0.1.24 | The Find tab reorganised: one list of conditions as single lines, one Add button with a picker that searches everything, spawn rules in the same list, one Options block |
 
 Before that: the seed search itself, the terrain map with relief and contours, structure layers, saved seeds
 and the rare-find catalogue.

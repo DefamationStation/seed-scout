@@ -19,7 +19,7 @@ Find Minecraft Java seeds with the structures and biomes you want, then explore 
 
 1. Install and launch **Minecraft Java 26.4 Snapshot 2** once through the Minecraft Launcher.
 2. Install Seed Scout from the download above. Python and Java are included; select your Minecraft folder if prompted.
-3. In **Find**, choose your features and set their **Near** or **Avoid** conditions, then click **Start searching**. Use **Inside one seed** to search a world you already know.
+3. In **Find**, click **Add a condition** and pick what you want. Each condition is one line; click it to set its distance or switch it between **Near** and **Avoid**. Then click **Start searching**. Use **Inside one seed** to search a world you already know.
 4. Open a result on the map, then copy its seed into Minecraft's **Create World** screen. You can also enter any numeric seed in the top bar to explore it directly.
 
 ## How it works

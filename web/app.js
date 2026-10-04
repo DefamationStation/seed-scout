@@ -213,13 +213,14 @@ async function restoreLastView() {
 const PRESET_FIELDS = ['anchor', 'radius', 'x', 'z', 'cluster', 'biomeMode', 'leeway'];
 function conditionPresets() { try { return JSON.parse(localStorage.getItem('seed-scout-condition-presets')) || []; } catch { return []; } }
 function renderConditionPresets() {
-  $('saved-presets').innerHTML = conditionPresets().map((p, i) => `<span class="saved-preset"><button data-saved-preset="${i}" title="Use these conditions">${esc(p.name)}</button><button data-delete-preset="${i}" title="Delete this preset" aria-label="Delete preset ${esc(p.name)}">×</button></span>`).join('');
+  $('saved-presets').innerHTML = conditionPresets().map((p, i) => `<span class="saved-preset"><button data-saved-preset="${i}" title="Use these conditions">${esc(p.name)}</button><button data-delete-preset="${i}" title="Delete this preset" aria-label="Delete preset ${esc(p.name)}">×</button></span>`).join('') || '<p class="hint">No presets yet.</p>';
 }
 $('saved-presets').onclick = e => {
   const use = e.target.closest('[data-saved-preset]'), remove = e.target.closest('[data-delete-preset]'), all = conditionPresets();
   if (remove) { all.splice(Number(remove.dataset.deletePreset), 1); localStorage.setItem('seed-scout-condition-presets', JSON.stringify(all)); return renderConditionPresets(); }
   if (!use || !catalog) return;
   const preset = all[Number(use.dataset.savedPreset)];
+  $('preset-menu').open = false; openRow = null;
   chosen.clear();
   for (const f of preset.chosen) if ((f.kind === 'structure' ? catalog.sets : catalog.biomes).includes(f.key)) chosen.set(`${f.kind}:${f.key}`, condition(f.kind, f.key, f));
   for (const [k, v] of Object.entries(preset.fields || {})) if (PRESET_FIELDS.includes(k) && $(k)) $(k).value = v;
@@ -227,7 +228,7 @@ $('saved-presets').onclick = e => {
   restoreLandscape(preset.landscape);
   syncAnchor(); renderFeatures(); renderChosen(); save();
 };
-$('condition-preset-save').onclick = () => { commitConditionFields(); $('condition-preset-form').hidden = false; $('condition-preset-name').value = ''; $('condition-preset-name').focus(); };
+$('condition-preset-save').onclick = () => { commitConditionFields(); $('preset-menu').open = false; $('condition-preset-form').hidden = false; $('condition-preset-name').value = ''; $('condition-preset-name').focus(); };
 $('condition-preset-cancel').onclick = () => { $('condition-preset-form').hidden = true; };
 $('condition-preset-form').onsubmit = e => {
   e.preventDefault();
@@ -338,10 +339,14 @@ try {
   if (saved && saved.defaults !== 2 && saved.fields.limit === '100000') delete saved.fields.limit;
   if (saved) { for (const [k, v] of Object.entries(saved.fields)) if ($(k) && k !== 'seed') $(k).value = v; for (const f of saved.chosen) chosen.set(`${f.kind}:${f.key}`, condition(f.kind, f.key, f)); }
 } catch { }
+function optionsSummary() {
+  const leeway = Number($('leeway').value) || 0, close = leeway ? `${leeway}% leeway` : 'exact';
+  $('options-summary').textContent = searchMode === 'world' ? `stop after ${$('world-max').value} places · ${close}`
+    : `${$('maxMatches').value} results · ${$('seed').value.trim() ? `seed ${$('seed').value.trim()}` : 'random seed'} · ${close}`;
+}
 function syncAnchor() {
   const custom = $('anchor').value === 'custom';
   $('coordinates').hidden = !custom;
-  document.querySelectorAll('[data-anchor]').forEach(b => b.classList.toggle('active', b.dataset.anchor === $('anchor').value));
 }
 // ---- Landscape conditions -------------------------------------------------
 // Conditions on the shape of the land: read from terrain, checked last, and scored so results can be ranked.
@@ -378,6 +383,25 @@ function closeNote(s) {
     : ' Nothing matched. Set a leeway under Search controls to see whether anything comes close.';
 }
 const landScore = result => result.features.reduce((sum, f) => sum + (f.kind === 'terrain' ? f.score || 0 : 0), 0);
+// ---- The list of conditions -------------------------------------------------
+// Every condition is one line that says what is asked. Clicking it opens the controls that change it; one row is
+// open at a time, and a row that was just added opens by itself.
+let openRow = null;
+function conditionRow(id, cls, mark, name, summary, body, remove) {
+  const open = openRow === id;
+  return `<div class="criterion ${cls} ${open ? 'open' : ''}">
+    <div class="criterion-top"><button type="button" class="criterion-head" data-open-row="${esc(id)}" aria-expanded="${open}">${mark}<span class="name">${name}</span><span class="summary">${summary}</span>${icon('chevron', 'chev')}</button>
+      <button type="button" class="icon-btn" ${remove} aria-label="Remove ${name}">${icon('x')}</button></div>
+    ${open ? `<div class="criterion-body">${body}</div>` : ''}
+  </div>`;
+}
+// A structure or biome condition in a few words: how many, how far, and from what.
+function ruleSummary(f) {
+  const unit = realmOf(f) === 'nether' ? ' Nether blocks' : ' blocks', parent = f.near && chosen.get(f.near);
+  const from = parent ? ` ${f.mode === 'exclude' ? 'of' : 'from'} the ${label(parent.key).toLowerCase()}` : realmOf(f) === 'end' ? ' from the End’s centre' : '';
+  if (f.mode === 'exclude') return `none within ${fmt(f.radius)}${unit}${from}`;
+  return `${f.count > 1 ? `${f.count} or more, ` : ''}${f.minRadius ? `${fmt(f.minRadius)} to ${fmt(f.radius)}` : `within ${fmt(f.radius)}`}${unit}${from}${f.or?.length ? `, or ${f.or.map(o => label(o.key).toLowerCase()).join(', ')}` : ''}`;
+}
 function landRows() {
   // Anything wanted nearby in the Overworld can be the place a landscape condition is read around.
   const anchors = [...chosen.values()].filter(f => f.mode !== 'exclude' && !realmOf(f));
@@ -395,10 +419,8 @@ function landRows() {
         : c.type === 'hill'
           ? `<span>Ground</span>${num('rise', 'Height')}${pick('measure', 'How the height is measured', [['above', 'blocks higher than the start'], ['y', 'or higher, as a Y level']])}<span>,</span>${num('minRadius', 'Nearest distance')}<span>to</span>${num('radius', 'Furthest distance')}<span>blocks away, at least</span>${num('across', 'Width of the high ground')}<span>across</span>${around}`
           : `<span>Within</span>${num('within', 'Distance to the river')}<span>blocks, at least</span>${num('length', 'River length')}<span>long and</span>${num('width', 'River width')}<span>wide,</span>${pick('shape', 'River shape', [['any', 'any shape'], ['fairly', 'fairly straight'], ['very', 'very straight']])}${around}`;
-    return `<div class="criterion land">
-      <div class="criterion-top">${glyph('terrain', c.type)}<span class="name">${LAND[c.type].name}</span><button class="icon-btn" data-land-remove="${i}" aria-label="Remove ${LAND[c.type].name}">${icon('x')}</button></div>
-      <div class="criterion-rule">${rule}</div>
-    </div>`;
+    const summary = c.type === 'coverage' && !c.biomes.length ? 'choose a biome' : `${landWish(c)}${c.from ? ` around the ${label(c.from).toLowerCase()}` : ''}`;
+    return conditionRow(`land:${i}`, 'land', glyph('terrain', c.type), LAND[c.type].name, esc(summary), `<div class="criterion-rule">${rule}</div>`, `data-land-remove="${i}"`);
   }).join('');
 }
 // Read what is typed before a request or a rebuild, even if the field has not lost focus yet.
@@ -413,8 +435,7 @@ function commitLandscape() {
 }
 function addLandscape(type) {
   if (landscape.length >= 12) return toast('Use up to 12 landscape conditions.', true);
-  commitConditionFields(); landscape.push(landCondition(type)); renderFeatures(); renderChosen(); save();
-  $('chosen').querySelector?.('.criterion.land:last-of-type')?.scrollIntoView({ block: 'nearest' });
+  commitConditionFields(); landscape.push(landCondition(type)); openRow = `land:${landscape.length - 1}`; renderFeatures(); renderChosen(); save();
 }
 // Changes and clicks inside the landscape rows; true when the event was one of theirs.
 function landscapeChanged(e) {
@@ -430,43 +451,64 @@ function landscapeClicked(e) {
   const remove = e.target.closest('[data-land-remove]'), biome = e.target.closest('[data-land-biome-remove]');
   if (!remove && !biome) return false;
   commitConditionFields();
-  if (remove) landscape.splice(Number(remove.dataset.landRemove), 1);
+  if (remove) { landscape.splice(Number(remove.dataset.landRemove), 1); openRow = null; }
   else { const c = landscape[Number(biome.dataset.land)]; c.biomes = c.biomes.filter(b => b !== biome.dataset.landBiomeRemove); }
   renderFeatures(); renderChosen(); save(); return true;
 }
-function renderFeatures() {
-  if (!catalog) return;
-  $('filter-field').hidden = kind === 'terrain';
-  if (kind === 'terrain') {
-    $('features').innerHTML = Object.entries(LAND).map(([type, land]) => { const count = landscape.filter(c => c.type === type).length;
-      return `<button type="button" class="feature land-add ${count ? 'selected' : ''}" data-land-add="${type}">${glyph('terrain', type)}<span class="name">${land.name}<small>${count ? `${count} added · add another` : land.hint}</small></span>${icon('plus', 'tick')}</button>`; }).join('');
-    $('kind-hint').textContent = 'Read from the terrain itself and checked last, so they suit a search that already asks for something else. Sort the results by best landscape fit to rank them.';
-    return;
-  }
-  const filter = $('filter').value.trim().toLowerCase();
-  const list = [...(kind === 'structure' ? catalog.sets.filter(rootStructure) : catalog.biomes)].filter(k => label(k).toLowerCase().includes(filter) || (kind === 'structure' && familyKeys(k).some(v => label(v).toLowerCase().includes(filter)))).sort((a, b) => label(a).localeCompare(label(b)));
-  const realm = k => (kind === 'structure' && catalog.dimensions?.[k]) || '', order = ['', 'nether', 'end'];
+// ---- The picker: what can be added -------------------------------------------
+// It opens under the list from "Add a condition". A tab shows one kind; typing in the search shows every kind.
+const PICKER = {
+  structure: ['Structures', 'Checked with the game’s own generation code.'],
+  biome: ['Biomes', 'Sampled every 32 blocks; tiny patches can be missed.'],
+  terrain: ['Landscape', 'Read from the terrain and checked last. Sort results by best landscape fit.'],
+  spawn: ['Spawn', 'About the spawn point itself. These are tested first.'],
+};
+const SPAWN_TILES = { biome: ['Spawn biome', 'The biome the world spawn is in', 'spawn'], slime: ['Slime chunks', 'Slime chunks around the origin', 'slime'] };
+const spawnMark = which => `<span class="glyph" style="--c:#ffd866">${icon(SPAWN_TILES[which][2])}</span>`;
+function featureTiles(of, filter) {
+  if (of === 'terrain') return Object.entries(LAND).filter(([, land]) => land.name.toLowerCase().includes(filter)).map(([type, land]) => { const count = landscape.filter(c => c.type === type).length;
+    return `<button type="button" class="feature land-add ${count ? 'selected' : ''}" data-land-add="${type}">${glyph('terrain', type)}<span class="name">${land.name}<small>${count ? `${count} added · add another` : land.hint}</small></span>${icon('plus', 'tick')}</button>`; }).join('');
+  if (of === 'spawn') return Object.entries(SPAWN_TILES).filter(([, tile]) => tile[0].toLowerCase().includes(filter)).map(([which, tile]) => { const on = which === 'biome' ? spawnRules.biomeMode !== 'any' : spawnRules.slimeCount > 0;
+    return `<button type="button" class="feature land-add ${on ? 'selected' : ''}" data-spawn-add="${which}">${spawnMark(which)}<span class="name">${tile[0]}<small>${tile[1]}</small></span>${icon(on ? 'check' : 'plus', 'tick')}</button>`; }).join('');
+  const list = [...(of === 'structure' ? catalog.sets.filter(rootStructure) : catalog.biomes)].filter(k => label(k).toLowerCase().includes(filter) || (of === 'structure' && familyKeys(k).some(v => label(v).toLowerCase().includes(filter)))).sort((a, b) => label(a).localeCompare(label(b)));
+  const realm = k => (of === 'structure' && catalog.dimensions?.[k]) || '', order = ['', 'nether', 'end'];
   list.sort((a, b) => order.indexOf(realm(a)) - order.indexOf(realm(b)));
   const heading = (k, i) => realm(k) && (i === 0 || realm(list[i - 1]) !== realm(k)) ? `<div class="feature-section">${REALMS[realm(k)]}<small>${realm(k) === 'nether' ? 'Nether blocks, from where your portal leads' : 'blocks from the centre of the End'}</small></div>` : '';
-  $('features').innerHTML = list.map((k, i) => heading(k, i) + (() => {
-    if (kind === 'structure' && STRUCTURE_FAMILIES.includes(k)) {
+  return list.map((k, i) => heading(k, i) + (() => {
+    if (of === 'structure' && STRUCTURE_FAMILIES.includes(k)) {
       const count = familyKeys(k).filter(v => chosen.has(`structure:${v}`)).length;
       const filters = familyFilterDescription(chosen.get(`structure:${k}`));
       return `<div class="feature category-feature ${count ? 'selected' : ''}"><button type="button" class="category-toggle" data-category="${esc(k)}" aria-pressed="${count > 0}">${glyph('structure', k)}<span class="name">${esc(familyName(k))}<small>${esc(filters || (chosen.has(`structure:${k}`) || !count ? 'Any type' : `${count} selected`))}</small></span></button><button type="button" class="subcategory-arrow" data-subcategories="${esc(k)}" aria-label="Narrow ${esc(familyName(k))}" title="Narrow by type">${icon('sliders')}</button></div>`;
     }
-    const selected = chosen.has(`${kind}:${k}`);
-    return `<label class="feature ${selected ? 'selected' : ''}"><input type="checkbox" data-key="${esc(k)}" ${selected ? 'checked' : ''}>${glyph(kind, k)}<span class="name">${esc(label(k))}</span>${icon('check', 'tick')}</label>`;
-  })()).join('') || '<p class="loading">No matching features.</p>';
-  $('kind-hint').textContent = kind === 'structure' ? 'Structures are confirmed with Minecraft’s own generation-start checks.' : 'Biomes are sampled every 32 blocks at surface height. Tiny patches can be missed.';
+    const selected = chosen.has(`${of}:${k}`);
+    return `<label class="feature ${selected ? 'selected' : ''}"><input type="checkbox" data-key="${esc(k)}" data-item-kind="${of}" ${selected ? 'checked' : ''}>${glyph(of, k)}<span class="name">${esc(label(k))}</span>${icon('check', 'tick')}</label>`;
+  })()).join('');
+}
+function renderFeatures() {
+  if (!catalog) return;
+  const filter = $('filter').value.trim().toLowerCase();
+  // Spawn conditions describe a seed, so they are not offered when searching inside one.
+  const kinds = filter ? Object.keys(PICKER).filter(k => k !== 'spawn' || searchMode !== 'world') : [kind];
+  $('features').innerHTML = kinds.map(k => { const tiles = featureTiles(k, filter); return tiles && filter ? `<div class="feature-section">${PICKER[k][0]}</div>${tiles}` : tiles; }).join('') || '<p class="loading">Nothing matches.</p>';
+  $('picker').classList.toggle('filtering', !!filter);
+  $('kind-hint').textContent = filter ? '' : PICKER[kind][1];
+}
+function setPicker(open) {
+  $('picker').hidden = !open; $('add-condition').setAttribute('aria-expanded', open); $('add-condition').hidden = open;
+  if (open) { renderFeatures(); $('filter').focus({ preventScroll: true }); $('picker').scrollIntoView({ block: 'nearest' }); }
+  else if ($('filter').value) { $('filter').value = ''; renderFeatures(); }
 }
 function renderChosen() {
   for (const f of chosen.values()) if (f.near && !canAnchor(chosen.get(f.near))) f.near = '';
   // Alternatives only make sense for a plain "near the origin" condition that nothing else is measured from.
   for (const [id, f] of chosen) if (f.or && (f.mode === 'exclude' || f.near || isAnchor(id))) delete f.or;
-  $('selection-count').textContent = `${chosen.size + landscape.length} selected`;
+  // Spawn conditions describe a seed, so they are set aside while searching inside one.
+  const total = chosen.size + landscape.length + (searchMode === 'world' ? 0 : (spawnRules.biomeMode !== 'any') + (spawnRules.slimeCount > 0));
+  $('selection-count').textContent = total; $('selection-count').hidden = !total;
   const number = (id, field, value, min, max, name) => `<input type="number" data-field="${field}" data-id="${esc(id)}" value="${value}" min="${min}" max="${max}" step="${field === 'count' ? 1 : 50}" aria-label="${name}">`;
-  $('chosen').innerHTML = [...chosen.entries()].map(([id, f]) => {
+  $('chosen').innerHTML = spawnRows() + [...chosen.entries()].map(([id, f]) => {
     const avoid = f.mode === 'exclude', name = esc(conditionName(f)), anchors = isAnchor(id) ? [] : anchorsFor(id);
+    if (openRow !== id) return conditionRow(id, avoid ? 'avoid' : '', glyph(f.kind, f.key), name, esc(ruleSummary(f)), '', `data-remove="${esc(id)}"`);
     const origin = !anchors.length ? '' : `<span class="origin"><span>${avoid ? 'of' : 'from'}</span><select data-near data-id="${esc(id)}" aria-label="What ${name} is measured from"><option value="">${realmOf(f) === 'nether' ? 'where your portal leads' : 'the search origin'}</option>${anchors.map(([other, a]) => `<option value="${esc(other)}" ${f.near === other ? 'selected' : ''}>${a.count > 1 ? 'each' : 'the'} ${esc(label(a.key).toLowerCase())}</option>`).join('')}</select></span>`;
     const unit = realmOf(f) === 'nether' ? `<span title="Measured in the Nether. One Nether block is eight Overworld blocks, and the origin is where a portal leads: its X and Z divided by 8.">Nether blocks</span>`
       : realmOf(f) === 'end' && !f.near ? `<span title="Every End portal arrives at the centre of the End, so that is where End distances start.">blocks from the End’s centre</span>` : '<span>blocks</span>';
@@ -476,14 +518,11 @@ function renderChosen() {
     const others = avoid || f.near || isAnchor(id) ? null : (f.or || []);
     const pick = (kind, keys) => keys.filter(k => !(kind === f.kind && k === f.key) && !others.some(o => o.kind === kind && o.key === k)).sort((a, b) => label(a).localeCompare(label(b))).map(k => `<option value="${kind}:${esc(k)}">${esc(label(k))}</option>`).join('');
     const either = !others ? '' : `<div class="criterion-or">${others.map((o, i) => `<span>or</span><span class="chip">${glyph(o.kind, o.key)}${esc(label(o.key))}<button data-or-remove="${i}" data-id="${esc(id)}" aria-label="Remove alternative ${esc(label(o.key))}">×</button></span>`).join('')}${others.length < 4 && catalog ? `<select data-or-add data-id="${esc(id)}" aria-label="Add an alternative to ${name}"><option value="">+ or…</option><optgroup label="Structures">${pick('structure', catalog.sets.filter(rootStructure))}</optgroup><optgroup label="Biomes">${pick('biome', catalog.biomes)}</optgroup></select>` : ''}</div>`;
-    return `<div class="criterion ${avoid ? 'avoid' : ''}">
-      <div class="criterion-top">${glyph(f.kind, f.key)}<span class="name">${name}</span>
-        <span class="mini-seg" role="group" aria-label="Condition for ${name}"><button type="button" data-mode="within" data-id="${esc(id)}" class="${avoid ? '' : 'active'}">Near</button><button type="button" data-mode="exclude" data-id="${esc(id)}" class="${avoid ? 'active' : ''}">Avoid</button></span>
-        <button class="icon-btn" data-remove="${esc(id)}" aria-label="Remove ${name}">${icon('x')}</button></div>
-      <div class="criterion-rule">${rule}</div>${either}
-    </div>`;
-  }).join('') + landRows() || '<p class="hint">Nothing selected yet. Tick a structure or biome above.</p>';
-  renderNearbyBiomes();
+    const types = f.kind === 'structure' && STRUCTURE_FAMILIES.includes(f.key) ? `<button type="button" class="link" data-subcategories="${esc(f.key)}">Narrow by type…</button>` : '';
+    const body = `<div class="criterion-rule"><span class="mini-seg" role="group" aria-label="Condition for ${name}"><button type="button" data-mode="within" data-id="${esc(id)}" class="${avoid ? '' : 'active'}">Near</button><button type="button" data-mode="exclude" data-id="${esc(id)}" class="${avoid ? 'active' : ''}">Avoid</button></span>${types}</div>
+      <div class="criterion-rule">${rule}</div>${either}`;
+    return conditionRow(id, avoid ? 'avoid' : '', glyph(f.kind, f.key), name, esc(ruleSummary(f)), body, `data-remove="${esc(id)}"`);
+  }).join('') + landRows() || '<p class="hint empty-list">Nothing yet. Add what you want the seed to have.</p>';
   syncButtons();
 }
 function syncButtons() {
@@ -505,39 +544,57 @@ function commitConditionFields() {
   // Apply the new maximum first, so the minimum is clamped against the visible range.
   inputs.sort((a, b) => Number(a.dataset.field === 'minRadius') - Number(b.dataset.field === 'minRadius'));
   for (const el of inputs) updateConditionField(el);
-  commitLandscape();
+  commitLandscape(); commitSpawn();
 }
 // ---- Conditions on the spawn itself ---------------------------------------
 // The biome the world spawn is in, and slime chunks around the search origin. Both are tested before any feature.
-function renderSpawnRules() {
-  $('spawn-biome-mode').value = spawnRules.biomeMode;
-  $('spawn-biome-pick').hidden = spawnRules.biomeMode === 'any';
-  $('spawn-biome-list').innerHTML = spawnRules.biomes.map(b => `<span class="chip">${glyph('biome', b)}${esc(label(b))}<button data-spawn-biome="${esc(b)}" aria-label="Remove ${esc(label(b))}">×</button></span>`).join('');
-  $('spawn-biome-add').innerHTML = `<option value="">Add a spawn biome…</option>${(catalog?.biomes || []).filter(b => !spawnRules.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}`;
-  $('slime-count').value = spawnRules.slimeCount; $('slime-radius').value = spawnRules.slimeRadius;
+// They are rows of the same list as everything else; spawnRules holds them.
+function spawnRows() {
+  let rows = '';
+  if (spawnRules.biomeMode !== 'any') {
+    const names = spawnRules.biomes.map(b => label(b)).join(' or ');
+    rows += conditionRow('spawn:biome', 'seeds-only', spawnMark('biome'), 'Spawn biome', esc(names ? `${spawnRules.biomeMode === 'not' ? 'not ' : ''}in ${names}` : 'choose a biome'),
+      `<div class="criterion-rule"><select data-spawn="mode" aria-label="Spawn biome rule"><option value="in" ${spawnRules.biomeMode === 'in' ? 'selected' : ''}>Spawn in one of</option><option value="not" ${spawnRules.biomeMode === 'not' ? 'selected' : ''}>Do not spawn in</option></select></div>
+       <div class="criterion-or">${spawnRules.biomes.map(b => `<span class="chip">${glyph('biome', b)}${esc(label(b))}<button data-spawn-biome="${esc(b)}" aria-label="Remove ${esc(label(b))}">×</button></span>`).join('<span>or</span>')}
+         <select data-spawn="add" aria-label="Add a spawn biome"><option value="">${spawnRules.biomes.length ? '+ or…' : 'Choose a biome…'}</option>${(catalog?.biomes || []).filter(b => !spawnRules.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}</select></div>`,
+      'data-spawn-remove="biome"');
+  }
+  if (spawnRules.slimeCount > 0) rows += conditionRow('spawn:slime', 'seeds-only', spawnMark('slime'), 'Slime chunks', `${spawnRules.slimeCount} or more within ${spawnRules.slimeRadius} chunks`,
+    `<div class="criterion-rule"><span>At least</span><input type="number" data-spawn="count" min="1" max="289" value="${spawnRules.slimeCount}" aria-label="Slime chunks wanted"><span>slime chunks within</span><input type="number" data-spawn="radius" min="1" max="8" value="${spawnRules.slimeRadius}" aria-label="Chunks from the origin"><span>chunks of the origin</span></div>`,
+    'data-spawn-remove="slime"');
+  return rows;
 }
-// Biomes wanted near the spawn are ordinary biome conditions; this is a second way in, beside the spawn biome,
-// because that is where one looks for it. The distances are set on the condition itself.
-function renderNearbyBiomes() {
-  const near = [...chosen.values()].filter(f => f.kind === 'biome' && f.mode !== 'exclude' && !f.near);
-  $('nearby-biome-list').innerHTML = near.map(f => `<span class="chip">${glyph('biome', f.key)}${esc(label(f.key))}<button data-nearby-biome="${esc(f.key)}" aria-label="Remove ${esc(label(f.key))}">×</button></span>`).join('');
-  $('nearby-biome-hint').hidden = !near.length;
-  $('nearby-biome-add').innerHTML = `<option value="">Add a biome to have nearby…</option>${(catalog?.biomes || []).filter(b => !chosen.has(`biome:${b}`)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}`;
+// Older code and saved presets ask for the spawn rules to be redrawn; they are part of the list now.
+function renderSpawnRules() { renderChosen(); }
+function commitSpawn() {
+  const typed = {};
+  for (const el of $('chosen').querySelectorAll('[data-spawn]')) if (el.dataset.spawn === 'count' || el.dataset.spawn === 'radius') typed[el.dataset.spawn] = Math.round(Number(el.value) || 0);
+  if (typed.radius !== undefined) spawnRules.slimeRadius = Math.max(1, Math.min(8, typed.radius || 5));
+  if (typed.count !== undefined) spawnRules.slimeCount = Math.max(1, Math.min((2 * spawnRules.slimeRadius + 1) ** 2, typed.count || 1));
 }
-$('nearby-biome-add').onchange = () => {
-  const b = $('nearby-biome-add').value; if (!b) return;
-  if (chosen.size >= 12) { toast('Choose up to 12 search conditions.', true); return renderNearbyBiomes(); }
-  commitConditionFields(); chosen.set(`biome:${b}`, condition('biome', b)); renderFeatures(); renderChosen(); save();
-};
-$('nearby-biome-list').onclick = e => { const b = e.target.closest('[data-nearby-biome]'); if (!b) return; commitConditionFields(); chosen.delete(`biome:${b.dataset.nearbyBiome}`); renderFeatures(); renderChosen(); save(); };
-$('spawn-biome-mode').onchange = () => { spawnRules.biomeMode = $('spawn-biome-mode').value; renderSpawnRules(); syncButtons(); save(); };
-$('spawn-biome-add').onchange = () => { const b = $('spawn-biome-add').value; if (b && spawnRules.biomes.length < 30) spawnRules.biomes.push(b); renderSpawnRules(); syncButtons(); save(); };
-$('spawn-biome-list').onclick = e => { const b = e.target.closest('[data-spawn-biome]'); if (!b) return; spawnRules.biomes = spawnRules.biomes.filter(x => x !== b.dataset.spawnBiome); renderSpawnRules(); syncButtons(); save(); };
-for (const id of ['slime-count', 'slime-radius']) $(id).onchange = () => {
-  spawnRules.slimeRadius = Math.max(1, Math.min(8, Math.round(Number($('slime-radius').value) || 5)));
-  spawnRules.slimeCount = Math.max(0, Math.min((2 * spawnRules.slimeRadius + 1) ** 2, Math.round(Number($('slime-count').value) || 0)));
-  renderSpawnRules(); syncButtons(); save();
-};
+function addSpawnRule(which) {
+  commitConditionFields();
+  if (which === 'biome' && spawnRules.biomeMode === 'any') spawnRules.biomeMode = 'in';
+  if (which === 'slime' && !spawnRules.slimeCount) spawnRules.slimeCount = 8;
+  openRow = `spawn:${which}`; renderFeatures(); renderChosen(); save();
+}
+function spawnChanged(e) {
+  const el = e.target.closest('[data-spawn]'); if (!el) return false;
+  commitConditionFields();
+  if (el.dataset.spawn === 'mode') spawnRules.biomeMode = el.value;
+  else if (el.dataset.spawn === 'add' && el.value && spawnRules.biomes.length < 30) spawnRules.biomes.push(el.value);
+  renderChosen(); save(); return true;
+}
+function spawnClicked(e) {
+  const biome = e.target.closest('[data-spawn-biome]'), remove = e.target.closest('[data-spawn-remove]');
+  if (!biome && !remove) return false;
+  commitConditionFields();
+  if (biome) spawnRules.biomes = spawnRules.biomes.filter(b => b !== biome.dataset.spawnBiome);
+  else if (remove.dataset.spawnRemove === 'biome') Object.assign(spawnRules, { biomeMode: 'any', biomes: [] });
+  else spawnRules.slimeCount = 0;
+  if (remove) openRow = null;
+  renderFeatures(); renderChosen(); save(); return true;
+}
 const request = () => {
   commitConditionFields();
   return { ...Object.fromEntries(fields.map(k => [k, $(k).value])), features: [...chosen.entries()].map(([id, f]) => ({ ...f, id, near: f.near || undefined })),
@@ -548,26 +605,35 @@ const request = () => {
 
 $('features').onchange = e => {
   const el = e.target.closest('[data-key]'); if (!el) return;
-  const id = `${kind}:${el.dataset.key}`;
-  if (el.checked) chosen.set(id, condition(kind, el.dataset.key)); else chosen.delete(id);
+  const of = el.dataset.itemKind, id = `${of}:${el.dataset.key}`;
+  commitConditionFields();
+  if (el.checked && chosen.size >= 12) { el.checked = false; return toast('Choose up to 12 search conditions.', true); }
+  if (el.checked) { chosen.set(id, condition(of, el.dataset.key)); openRow = id; }
+  else { chosen.delete(id); if (openRow === id) openRow = null; }
   el.closest('.feature').classList.toggle('selected', el.checked);
   renderChosen(); save();
 };
 $('features').onclick = e => {
   const land = e.target.closest('[data-land-add]');
   if (land) return addLandscape(land.dataset.landAdd);
+  const spawn = e.target.closest('[data-spawn-add]');
+  if (spawn) return addSpawnRule(spawn.dataset.spawnAdd);
   const arrow = e.target.closest('[data-subcategories]');
   if (arrow) { openSubcategories(arrow.dataset.subcategories, 'find'); return; }
   const button = e.target.closest('[data-category]'); if (!button) return;
   const family = button.dataset.category, keys = familyKeys(family);
+  commitConditionFields();
   if (keys.some(key => chosen.has(`structure:${key}`))) {
     for (const key of keys) chosen.delete(`structure:${key}`);
+    if (openRow?.startsWith('structure:') && !chosen.has(openRow)) openRow = null;
   } else {
     if (chosen.size >= 12) { toast('Choose up to 12 search conditions.', true); return; }
-    chosen.set(`structure:${family}`, condition('structure', family));
+    chosen.set(`structure:${family}`, condition('structure', family)); openRow = `structure:${family}`;
   }
   renderFeatures(); renderChosen(); save();
 };
+$('add-condition').onclick = () => setPicker(true);
+$('picker-done').onclick = () => setPicker(false);
 
 let subcategoryContext = null;
 // A ship template is a shape in one of six states; the chooser shows a row per state with the shapes as short picks.
@@ -649,7 +715,7 @@ $('subcategory-remove').onclick = () => { chosen.delete(`structure:${subcategory
 for (const id of ['subcategory-close', 'subcategory-done']) $(id).onclick = () => $('subcategory-dialog').close();
 $('subcategory-dialog').onclick = e => { if (e.target === e.currentTarget) { const box = e.currentTarget.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) e.currentTarget.close(); } };
 $('chosen').onchange = e => {
-  if (landscapeChanged(e)) return;
+  if (landscapeChanged(e) || spawnChanged(e)) return;
   const near = e.target.closest('[data-near]');
   if (near) { chosen.get(near.dataset.id).near = near.value; renderChosen(); save(); return; }
   const or = e.target.closest('[data-or-add]');
@@ -662,11 +728,15 @@ $('chosen').onchange = e => {
   renderChosen(); save();
 };
 $('chosen').onclick = e => {
-  if (landscapeClicked(e)) return;
+  const head = e.target.closest('[data-open-row]');
+  if (head) { commitConditionFields(); openRow = openRow === head.dataset.openRow ? null : head.dataset.openRow; renderChosen(); save(); return; }
+  const types = e.target.closest('[data-subcategories]');
+  if (types) return openSubcategories(types.dataset.subcategories, 'find');
+  if (landscapeClicked(e) || spawnClicked(e)) return;
   const alternative = e.target.closest('[data-or-remove]');
   if (alternative) { const f = chosen.get(alternative.dataset.id); f.or.splice(Number(alternative.dataset.orRemove), 1); if (!f.or.length) delete f.or; renderChosen(); save(); return; }
   const remove = e.target.closest('[data-remove]'), mode = e.target.closest('[data-mode]');
-  if (remove) { chosen.delete(remove.dataset.remove); renderChosen(); renderFeatures(); save(); }
+  if (remove) { commitConditionFields(); chosen.delete(remove.dataset.remove); if (openRow === remove.dataset.remove) openRow = null; renderChosen(); renderFeatures(); save(); }
   else if (mode) {
     const f = chosen.get(mode.dataset.id);
     f.mode = mode.dataset.mode;
@@ -683,12 +753,11 @@ $('usage').addEventListener('change', () => {
 $('mapWorkers').addEventListener('change', () => { showUsage(); setMapWorkers($('mapWorkers').value); });
 $('threads').addEventListener('change', showUsage);
 for (const f of fields) $(f).addEventListener('change', () => {
-  if (f === 'radius') { for (const entry of chosen.values()) { entry.radius = Number($('radius').value); entry.minRadius = Math.min(entry.minRadius, entry.radius - 32); } renderChosen(); }
-  syncAnchor(); save();
+  syncAnchor(); optionsSummary(); save();
 });
-document.querySelectorAll('[data-anchor]').forEach(el => el.onclick = () => { $('anchor').value = el.dataset.anchor; $('anchor').dispatchEvent(new Event('change')); });
+$('world-max').addEventListener('change', () => optionsSummary());
 document.querySelectorAll('[data-kind]').forEach(el => el.onclick = () => {
-  kind = el.dataset.kind;
+  kind = el.dataset.kind; $('filter').value = '';
   document.querySelectorAll('[data-kind]').forEach(b => b.classList.toggle('active', b === el));
   $('features').scrollTop = 0; renderFeatures();
 });
@@ -723,7 +792,9 @@ function syncSearchMode() {
   const world = searchMode === 'world';
   $('find-body').classList.toggle('world-mode', world);
   document.querySelectorAll('[data-search-mode]').forEach(b => b.classList.toggle('active', b.dataset.searchMode === searchMode));
-  $('origin-title').textContent = world ? 'Nearest to' : 'Search around';
+  $('origin-title').textContent = world ? 'Nearest to' : 'Around';
+  if (world && kind === 'spawn') document.querySelector('[data-kind="structure"]').click();
+  optionsSummary(); renderFeatures(); renderChosen();
   $('start').lastChild.textContent = world ? 'Search this seed' : 'Start searching';
   if (world && !$('world-seed').value.trim()) $('world-seed').value = worldMap.seed() || state.world?.seed || '';
   worldHint(); syncButtons();
@@ -731,11 +802,11 @@ function syncSearchMode() {
 function worldHint() {
   if (searchMode !== 'world') return;
   const wanted = [...chosen.values()].filter(f => f.mode !== 'exclude');
-  $('world-hint').textContent = !wanted.length ? 'Choose what to look for below.'
+  $('world-hint').textContent = !wanted.length ? 'Add what to look for.'
     : `Finds every place in this seed with ${wanted.map(f => label(f.key).toLowerCase()).join(', ')}${[...chosen.values()].some(f => f.mode === 'exclude') ? ' and none of what you avoid' : ''}. `
       + (chosen.size > 1 ? 'The rarest structure in the list is the place; the other distances are measured from it, not from spawn. ' : '')
       + ([...chosen.values()].some(f => f.kind === 'structure' && f.mode !== 'exclude' && f.count > 1) ? 'A structure with a count above 1 is looked for as a group: that many within its distance of one of them. ' : wanted.some(f => f.kind === 'structure') ? 'Raise the count of a structure to look for groups of it. ' : '')
-      + 'Places come nearest first. The whole world is 60 million blocks across, so reaching the border can take days; you can stop and keep searching later.';
+      + 'Places come nearest first; reaching the world border can take days, and you can stop and continue later.';
 }
 document.querySelectorAll('[data-search-mode]').forEach(b => { b.onclick = () => { searchMode = b.dataset.searchMode; try { localStorage.setItem('seed-scout-search-mode', searchMode); } catch { } syncSearchMode(); }; });
 async function startWorldSearch(resume = false) {
@@ -790,7 +861,7 @@ async function openPlace(place) {
 }
 $('places').onclick = e => { const card = e.target.closest('[data-place]'); if (card) openPlace(state.world.places[Number(card.dataset.place)]); };
 $('places').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-place]')) { e.preventDefault(); e.target.click(); } };
-$('start').onclick = () => searchMode === 'world' ? startWorldSearch() : startSearch();
+$('start').onclick = () => { setPicker(false); return searchMode === 'world' ? startWorldSearch() : startSearch(); };
 async function stopSearch() {
   try { await api('/api/stop', {}); notice('Stopping after the current checks…'); $('stop').disabled = $('stop-results').disabled = true; }
   catch (e) { notice(e.message, true); toast(e.message, true); }
