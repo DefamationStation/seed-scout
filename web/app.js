@@ -236,6 +236,12 @@ function queueEstimate() {
       + (budget && needed > budget ? ` · the ${fmt(budget)}-seed budget would find about ${fmt(Math.floor(budget / found.seedsPerMatch))}` : '') + '.';
   }, 500);
 }
+// ---- Settings pane -------------------------------------------------------
+// The desktop shell handles seedscout:// links itself (folder picker, updates, import); a browser has no shell.
+document.documentElement.classList.toggle('desktop', navigator.userAgent.includes('Electron'));
+document.querySelectorAll('[data-shell]').forEach(button => { button.onclick = () => window.open(`seedscout://${button.dataset.shell}`); });
+$('map-detail').value = worldMap.detail();
+$('map-detail').onchange = () => worldMap.setDetail($('map-detail').value);
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 function toast(message, error = false) {
   const el = $('toast'); el.textContent = message; el.classList.toggle('error', error); el.hidden = false;
@@ -943,6 +949,7 @@ async function poll() {
     $('mapWorkers').value = String(nearestStep(catalog.mapWorkers || 2, cores));
     showUsage();
     if (!$('version').options.length) loadVersions();
+    $('settings-minecraft').textContent = `Using ${versionName(catalog.version)}. Change the version with the list at the top right.`;
     $('nearest-feature').innerHTML = [['structure', catalog.sets], ['biome', catalog.biomes]].map(([k, keys]) => `<optgroup label="${k === 'structure' ? 'Structures' : 'Biomes'}">${[...keys].sort((a, b) => label(a).localeCompare(label(b))).map(key => `<option value="${k}:${esc(key)}">${esc(label(key))}</option>`).join('')}</optgroup>`).join('');
     // The structure layers are now known, so the map can start filling them in.
     worldMap.refresh(); renderLayers();

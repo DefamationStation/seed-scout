@@ -58,36 +58,30 @@ What comes next for Seed Scout, in the order it is planned. Items are specific t
 - **Copy a seed card.** One button copies a text card: seed, version, spawn, feature coordinates, tags and
   notes. An image card is not done.
 
+- **Marker clusters.** Markers of one type that would overlap are drawn as one marker with a count; clicking it
+  zooms in.
+- **Settings in one place.** A Settings panel holds PC usage, terrain detail and the Minecraft version in use,
+  and in the desktop app the Minecraft folder, updates, import, the data folder and About.
+- **Fast terrain detail.** A Settings choice that halves the sampling, so terrain views need about a quarter of
+  the tiles. This is the answer to the slow 200-block scale for those who prefer speed over sharpness; the
+  default stays sharp.
+- **A surface teleport for buried structures.** The card's details give the open ground straight above the
+  structure as a second teleport, since the spot inside it is an estimate.
+
 ## Next
 
-### Templates and variants
-
-1. **Shipwreck loot.** Templates are now a filter and shown on the card; which chests a template carries
+1. **Shipwreck loot.** Templates are a filter and shown on the card; which chests a template carries
    (treasure, map, supply) is not shown yet.
-
-### Map
-
-2. **Marker clustering** at wide zooms, in place of overlapping dots.
-
-### Housekeeping
-
-3. **Settings in one place.** PC usage is inside Search controls, the Minecraft folder in the File menu and
-    updates in Help; one settings panel for all three.
-4. **Teleport you can trust.** The standing spot is computed from terrain and piece boxes, not placed blocks.
-    Check every structure type in a real world, fix the ones that land inside a block, and add a safe variant
-    (a few blocks up, with slow falling) for the types that stay uncertain.
-5. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
-    Supporting ones where it does not means moving the engine's version-specific calls behind one small layer
-    per version. This needs a second, different version installed to build and test against.
-6. **The 200-block scale.** Still the slowest view, and three attempts did not change that, so it is parked:
-    - a whole tile computed over a slice of the height range matched the game but was no faster (14.8 against
-      13.7 ms per tile);
-    - accepting open-ocean columns without the aquifer pass gained 3–5% and got about 400 sea-floor heights
-      per 800,000 wrong;
-    - more map workers help a little (about 15% from 16 to 24 on a 32-thread PC, nothing beyond), which the
-      Maximum preset now uses.
-    What would move it is fewer samples at that zoom (a coarser look) or a hand-written height calculation
-    that shares work between neighbouring columns, which the game's own classes do not allow.
+2. **Teleport spots checked in a real world.** The standing spots come from terrain and piece boxes, not placed
+   blocks. Each structure type needs a visit in the game to confirm the spot inside or beside it is open.
+3. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
+   Supporting ones where it does not means moving the engine's version-specific calls behind one small layer
+   per version. This needs a second, different version installed to build and test against.
+4. **Sharp terrain at the 200-block scale, faster.** With sharp detail it is still the slowest view. Three
+   attempts did not change that (a height-sliced whole tile was no faster; skipping the aquifer pass for open
+   ocean gained 3–5% and broke sea-floor heights; more workers give about 15%). What would is a hand-written
+   height calculation that shares work between neighbouring columns, which the game's own classes do not allow.
+5. **An image card for saved seeds**, beside the text one.
 
 ## Later
 

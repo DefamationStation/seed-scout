@@ -50,7 +50,19 @@ const worldMap = (() => {
   // a view needs the same few hundred tiles however far out it is.
   const MAX_TERRAIN_STEP = 16, MAX_STEP = 128, STEPS = [1, 2, 4, 8, 16, 32, 64, 128];
   const modeFor = step => step > MAX_TERRAIN_STEP ? 'quick' : 'terrain';
-  const terrainStep = () => Math.max(1, Math.min(MAX_STEP, 2 ** Math.ceil(Math.log2(bpp * 2))));
+  // Screen pixels per sample: 2 to 4 for "sharp", 4 to 8 for "fast", which needs about a quarter of the tiles.
+  let detail = 2;
+  try { if (localStorage.getItem('seed-scout-map-detail') === 'fast') detail = 4; } catch { }
+  function terrainStep() {
+    const step = Math.max(1, Math.min(MAX_STEP, 2 ** Math.ceil(Math.log2(bpp * detail))));
+    // Whatever the detail, views up to 8 blocks per pixel stay real terrain rather than the overview.
+    return bpp <= MAX_TERRAIN_STEP / 2 ? Math.min(MAX_TERRAIN_STEP, step) : step;
+  }
+  function setDetail(name) {
+    detail = name === 'fast' ? 4 : 2;
+    try { localStorage.setItem('seed-scout-map-detail', name === 'fast' ? 'fast' : 'sharp'); } catch { }
+    terrainView = ''; invalidate(); queueLegend();
+  }
   function tilesFor(step, mode = modeFor(step)) {
     if (!result || !width) return [];
     const span = step * 32, offset = terrain.sampleOffset(step), view = bounds(), tiles = [];
@@ -237,7 +249,8 @@ const worldMap = (() => {
   function collect() {
     markersDirty = false;
     if (!result) { markerList = []; return; }
-    const view = bounds(), margin = 30 * bpp, seen = new Set(), gathered = [], stats = {};
+    const view = bounds(), margin = 30 * bpp, seen = new Set(), stats = {};
+    let gathered = [];
     const add = marker => { if (!seen.has(marker.id)) { seen.add(marker.id); gathered.push(marker.portalSize === 'huge' ? { ...marker, key: 'huge_ruined_portals' } : marker); } };
     if (selection?.marker) add(selection.marker);
     if (layers.matches) matchMarkers.forEach(add);
@@ -252,6 +265,20 @@ const worldMap = (() => {
         for (const marker of entry.features) if (variantShown(feature, marker) && marker.x > view.left - margin && marker.x < view.right + margin && marker.z > view.top - margin && marker.z < view.bottom + margin) { state.count++; add(marker); }
       }
     }
+    // Markers of one type that would sit on top of each other become a single marker with a count.
+    // Matches, pins and the selection always stand alone. Clicking a cluster zooms in on it.
+    const reach = 26, groups = new Map(), merged = [];
+    for (const marker of gathered) {
+      if (marker.source !== 'auto' || selection?.marker?.id === marker.id) { merged.push(marker); continue; }
+      const p = screen(marker.x, marker.z), id = `${marker.key}:${Math.floor(p.x / reach)}:${Math.floor(p.y / reach)}`;
+      let group = groups.get(id);
+      if (!group) { groups.set(id, group = { id, members: [] }); merged.push(group); }
+      group.members.push(marker);
+    }
+    gathered = merged.map(g => !g.members ? g : g.members.length === 1 ? g.members[0] : {
+      ...g.members[0], id: `cluster:${g.id}`, cluster: g.members.length,
+      x: Math.round(g.members.reduce((sum, m) => sum + m.x, 0) / g.members.length), z: Math.round(g.members.reduce((sum, m) => sum + m.z, 0) / g.members.length),
+    });
     const weight = m => (selection?.marker?.id === m.id ? -100 : 0) + m.rank;
     gathered.sort((a, b) => weight(a) - weight(b));
     const cells = new Map(), spacing = 24;
@@ -393,6 +420,14 @@ const worldMap = (() => {
       ctx.beginPath(); ctx.arc(p.x, p.y, big, 0, Math.PI * 2); ctx.fillStyle = look.colour; ctx.fill();
       ctx.lineWidth = pinned ? 2.5 : 1.5; ctx.strokeStyle = pinned ? '#fff' : 'rgba(255,255,255,.75)'; ctx.stroke();
       glyph(look.icon, p.x, p.y, big * 1.36, '#10181b');
+      if (m.cluster) {
+        const text = m.cluster > 99 ? '99+' : String(m.cluster), bx = p.x + big * .78, by = p.y - big * .78;
+        ctx.font = '700 9px system-ui, "Segoe UI", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const half = Math.max(7, ctx.measureText(text).width / 2 + 4);
+        ctx.beginPath(); ctx.roundRect(bx - half, by - 7, half * 2, 14, 7); ctx.fillStyle = '#10181b'; ctx.fill();
+        ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.fillText(text, bx, by + .5);
+      }
       if (labelled || (layers.labels && (selected || pinned) && bpp <= 16)) caption(label(m.key), p.x, p.y + big + 4);
     }
 
@@ -535,7 +570,7 @@ const worldMap = (() => {
     canvas.classList.toggle('pointing', !!marker && !measure);
     if (marker && !measure) {
       const p = screen(marker.x, marker.z);
-      tip.innerHTML = `<b>${esc(label(marker.key))}</b><span>X ${marker.x} · Z ${marker.z}</span>`;
+      tip.innerHTML = marker.cluster ? `<b>${marker.cluster} × ${esc(label(marker.key))}</b><span>Click to zoom in</span>` : `<b>${esc(label(marker.key))}</b><span>X ${marker.x} · Z ${marker.z}</span>`;
       tip.style.left = `${p.x}px`; tip.style.top = `${p.y - (marker.dot ? 5 : markerRadius()) - 10}px`;
     }
   }
@@ -583,6 +618,7 @@ const worldMap = (() => {
         <summary>More details<span class="chev">${icon('chevron')}</span></summary>
         <dl class="facts">
           ${fact('Teleport', `${stand.x} ${stand.y} ${stand.z}${stand.where ? ` <small>${esc(stand.where)}</small>` : ''}`)}
+          ${stand.above ? fact('Surface above', `${stand.above.x} ${stand.above.y} ${stand.above.z} <small><button class="link" id="info-tp-above" title="The spot inside is an estimate; this one is open ground${stand.above.water ? ' (water surface)' : ''} straight above it">Copy /tp</button></small>`) : ''}
           ${fact('Chunk', `${p.chunkX}, ${p.chunkZ}`)}
           ${fact('Surface', `${esc(label(p.surfaceBlock || (p.water ? 'water' : 'land')))} · Y ${p.surfaceY}`)}
           ${fact('Ground', `Y ${p.groundY}${p.water ? ' · below water' : ''}`)}
@@ -599,6 +635,7 @@ const worldMap = (() => {
       $('info-more').ontoggle = () => { try { localStorage.setItem('seed-scout-inspector-more', $('info-more').open ? '1' : '0'); } catch { } };
       $('info-close').onclick = closeInspector;
       $('info-copy').onclick = () => copyText(`${p.x} ${p.z}`, 'Coordinates copied');
+      if ($('info-tp-above')) $('info-tp-above').onclick = () => copyText(`/tp @s ${stand.above.x} ${stand.above.y} ${stand.above.z}`, 'Teleport command copied · surface above it');
       $('info-tp').onclick = () => copyText(`/tp @s ${stand.x} ${stand.y} ${stand.z}`, `Teleport command copied${stand.where ? ` · ${stand.where}` : ''}`);
       if ($('info-unpin')) $('info-unpin').onclick = () => { pins.set(seed, (pins.get(seed) || []).filter(f => f.id !== marker.id)); closeInspector(); };
     } catch (e) {
@@ -634,6 +671,7 @@ const worldMap = (() => {
     const at = locate(event);
     if (measure) { if (!measure.a || measure.b) { measure.a = at; measure.b = null; } else measure.b = at; measure.cursor = at; measureText(); invalidate(); return; }
     const marker = markerAt(at.px, at.py);
+    if (marker?.cluster) return flyTo(marker.x, marker.z, bpp / 2.5);
     inspect(marker ? { x: marker.x, z: marker.z } : at, marker, true);
   }
   function keys(event) {
@@ -741,7 +779,7 @@ const worldMap = (() => {
   return {
     show, clear, on, flyTo, jump, home, fit, focus, pin, zoomBy, setMeasure,
     layers, setLayer, setFeature, applyLayers, snapshot, features, defaultFeature,
-    ZOOM_STOPS, zoomLevel, refresh: changed,
+    ZOOM_STOPS, zoomLevel, refresh: changed, setDetail, detail: () => detail === 4 ? 'fast' : 'sharp',
     seed: () => result?.seed, current: () => result, view: () => ({ x: centre.x, z: centre.z, bpp }),
     biomeColour: terrain.colour, slimeChunk: isSlime,
   };

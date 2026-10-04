@@ -230,7 +230,17 @@ else {
     window = new BrowserWindow({ width: 1440, height: 900, minWidth: 900, minHeight: 600, backgroundColor: '#0b1012', autoHideMenuBar: true, title: 'Seed Scout', webPreferences: { contextIsolation: true, sandbox: true } });
     window.on('closed', () => { window = null; });
     // Only the local app is shown in the window; any other link opens in the user's browser.
-    window.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      // The Settings pane asks the shell for things only it can do through seedscout:// links.
+      const action = /^seedscout:\/\/([a-z-]+)/.exec(url)?.[1];
+      if (action === 'minecraft-folder') changeMinecraft();
+      else if (action === 'import') importData();
+      else if (action === 'data-folder') shell.openPath(dataDir());
+      else if (action === 'about') showAbout();
+      else if (action === 'check-updates') { if (updates) updates.check(); else dialog.showMessageBox(window, { message: 'Updates are checked in the installed app', detail: 'This copy was started from a checkout.' }); }
+      else if (/^https?:/.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
     window.webContents.on('will-navigate', (event, url) => { if (backendUrl && !url.startsWith(backendUrl)) { event.preventDefault(); if (/^https?:/.test(url)) shell.openExternal(url); } });
     buildMenu();
     await window.loadFile(path.join(__dirname, 'loading.html'));

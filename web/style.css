@@ -344,6 +344,10 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .map-host canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 .map-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; background-color: #0d1315; background-image: linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .028) 1px, transparent 1px); background-size: 32px 32px; }
 .empty-card { max-width: 400px; text-align: center; color: var(--muted); }
+.desktop-only { display: none !important; }
+.desktop .desktop-only { display: revert !important; }
+.desktop div.desktop-only { display: block !important; }
+.settings-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
 .empty-actions { display: flex; flex-direction: column; gap: 8px; margin: 18px auto 0; max-width: 300px; }
 .empty-card .hint { margin-top: 14px; }
 .empty-card > svg { width: 62px; height: 62px; color: var(--line-strong); }

@@ -33,6 +33,7 @@
   <button data-open="layers" title="Map layers and legend"><span data-icon="layers"></span><em>Layers</em></button>
   <button data-open="map" class="only-narrow" title="Show the map"><span data-icon="map"></span><em>Map</em></button>
   <span class="rail-gap"></span>
+  <button data-open="settings" title="Settings"><span data-icon="sliders"></span><em>Settings</em></button>
   <button data-open="about" title="Accuracy and shortcuts"><span data-icon="info"></span><em>About</em></button>
 </nav>
 
@@ -88,12 +89,7 @@
       </div>
 
       <details class="group advanced">
-        <summary><span data-icon="sliders"></span>Search controls<small>workers, starting seed, clustering</small><span class="chev" data-icon="chevron"></span></summary>
-        <label class="field"><span>PC usage <i id="cores-hint"></i></span><select id="usage"><option value="quiet">Quiet · leaves most of the PC free</option><option value="balanced">Balanced</option><option value="maximum">Maximum · fastest, PC may feel slow</option><option value="custom">Custom</option></select></label>
-        <div class="field-row">
-          <label class="field"><span>Map workers</span><select id="mapWorkers"></select></label>
-          <label class="field"><span>Search workers</span><select id="threads"><option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option><option>12</option><option>16</option><option>20</option><option>24</option><option>28</option><option>32</option><option>48</option><option>64</option></select></label>
-        </div>
+        <summary><span data-icon="sliders"></span>Search controls<small>results, starting seed, clustering</small><span class="chev" data-icon="chevron"></span></summary>
         <label class="field"><span>Results to find</span><input id="maxMatches" type="number" min="1" max="100" value="10"></label>
         <label class="field"><span>Biome search</span><select id="biomeMode"><option value="terrain">Terrain-aware surface checks</option><option value="fast">Fast candidates (can miss more)</option><option value="exhaustive">Exhaustive terrain columns (slowest)</option></select></label>
         <p class="hint">Terrain-aware checks estimate the surface height at each sample, then confirm candidates on the real terrain column. Exhaustive computes the column at every sample and is several times slower. All modes sample every 32 blocks; narrow biome patches can still be missed.</p>
@@ -223,6 +219,44 @@
       <div class="group">
         <h3>Legend</h3>
         <div id="legend" class="legend"><p class="hint">Open a seed to see what is in view.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section class="pane" data-pane="settings" hidden>
+    <div class="pane-head">
+      <h2>Settings</h2>
+      <p>How much of this PC Seed Scout uses, how the map trades detail for speed, and where Minecraft is read from.</p>
+    </div>
+    <div class="pane-body">
+      <div class="group">
+        <h3>Performance</h3>
+        <label class="field"><span>PC usage <i id="cores-hint"></i></span><select id="usage"><option value="quiet">Quiet · leaves most of the PC free</option><option value="balanced">Balanced</option><option value="maximum">Maximum · fastest, PC may feel slow</option><option value="custom">Custom</option></select></label>
+        <div class="field-row">
+          <label class="field"><span>Map workers</span><select id="mapWorkers"></select></label>
+          <label class="field"><span>Search workers</span><select id="threads"><option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option><option>12</option><option>16</option><option>20</option><option>24</option><option>28</option><option>32</option><option>48</option><option>64</option></select></label>
+        </div>
+        <p class="hint">Map workers apply at once. Search workers apply to the next search.</p>
+      </div>
+      <div class="group">
+        <h3>Map</h3>
+        <label class="field"><span>Terrain detail</span><select id="map-detail"><option value="sharp">Sharp · 2 to 4 pixels per sample</option><option value="fast">Fast · half the detail, about a quarter of the tiles</option></select></label>
+        <p class="hint">Fast fills terrain views about four times sooner and looks blockier. Zooming in always reaches single blocks.</p>
+      </div>
+      <div class="group">
+        <h3>Minecraft</h3>
+        <p class="hint" id="settings-minecraft">The version is chosen with the list at the top right.</p>
+        <button class="btn small desktop-only" data-shell="minecraft-folder">Change Minecraft folder…</button>
+      </div>
+      <div class="group desktop-only">
+        <h3>App</h3>
+        <div class="settings-actions">
+          <button class="btn small" data-shell="check-updates">Check for updates…</button>
+          <button class="btn small" data-shell="import">Import saved seeds and catalogue…</button>
+          <button class="btn small" data-shell="data-folder">Open data folder</button>
+          <button class="btn small" data-shell="about">About Seed Scout</button>
+        </div>
       </div>
     </div>
   </section>

@@ -310,7 +310,10 @@ public final class SeedEngine {
         // Buried: inside the first piece (the one the structure grows from), on its floor.
         var piece=start.getPieces().get(0);var inner=piece.getBoundingBox();
         int floor=inner.minY()+(piece instanceof PoolElementStructurePiece pool?pool.getGroundLevelDelta():1);
-        return Map.of("x",(inner.minX()+inner.maxX())>>1,"y",Math.min(floor,inner.maxY()),"z",(inner.minZ()+inner.maxZ())>>1,"where","inside it");
+        int x=(inner.minX()+inner.maxX())>>1,z=(inner.minZ()+inner.maxZ())>>1;
+        // The spot inside is a best guess; the ground straight above it is always open, for digging down or looking first.
+        var top=Surface.of(generator.getBaseColumn(x,z,heights,state));
+        return Map.of("x",x,"y",Math.min(floor,inner.maxY()),"z",z,"where","inside it","above",Map.of("x",x,"y",top.top()+1,"z",z,"water",top.water()));
     }
     // exclude: the seed passes only when nothing matches; otherwise it needs count matches between minRadius and radius.
     // near names the id of another condition: this one is then measured from each of that condition's matches.
