@@ -1,93 +1,117 @@
 # Roadmap
 
-What comes next for Seed Scout, in the order it is planned. Items are specific to what the app does today.
+Where Seed Scout stands after 0.1.13 and what comes next. The plan is short on purpose: a few target wins, in
+order, each with what "done" looks like.
 
-## Done
+## Shipped so far
 
-- **Compact feature card.** Selecting something on the map shows a small card: name, X Y Z, one line on where
-  it sits (buried, under water, ground height) and the copy buttons. Everything else is under *More details*,
-  which remembers whether it was open.
-- **PC usage setting.** *Search controls* has a PC usage preset (Quiet, Balanced, Maximum) that sets search
-  workers and map workers together; each can also be set on its own. Map workers apply at once and are
-  remembered. Engine memory now follows the machine (half its RAM, 2 to 6 GB) instead of a fixed 6 GB.
-- **Installer and updates.** Windows installer built and published by the release workflow; installed copies
-  update themselves from it.
-- **Biome-first map.** A terrain view starts as the quick biome map at a quarter of its resolution, which
-  arrives in about a tenth of a second, and terrain fills in on top.
-- **Sort results by one feature.** With several conditions, *Sort by* orders the found worlds by the nearest
-  match of one of them instead of the closest overall.
-- **Search and map together.** Search workers run just below normal priority and map workers just above, so
-  the map stays quick during a search on every core and the search loses nothing when the map is idle.
-- **Import.** In the desktop app, *File → Import saved seeds and catalogue…* copies them from a checkout or
-  another install's data folder (the current ones are kept as `.bak`).
+| Version | What it added |
+|---|---|
+| 0.1.2 – 0.1.3 | Desktop app for Windows with bundled Python and Java, automatic releases, self-update |
+| 0.1.4 | Compact feature card, PC usage setting |
+| 0.1.5 | Biome-first map, sorting results by one feature, map priority during searches, data import |
+| 0.1.6 | Smaller installer (136 → 106 MB), app icon, About, What's new |
+| 0.1.7 | Minecraft version picker, updates that ask first |
+| 0.1.8 | Shipwreck template filters for searches and map layers |
+| 0.1.9 | Village (abandoned), igloo (basement) and ocean ruin (cluster) traits on the card and as search filters |
+| 0.1.10 | First-run screen, start-up stages, readable errors, odds and time estimate, saved condition presets, finish notification, last view restored |
+| 0.1.11 | Tags, filter and a copyable text card for saved seeds |
+| 0.1.12 | Marker clusters, Settings panel, fast terrain detail, surface teleport for buried structures |
+| 0.1.13 | Predicted water placement for shipwrecks (floating, shallow, deck underwater, beached), checked against the game's own placement routine |
 
-- **Smaller download.** The bundled Java runtime holds only the modules world generation uses, Python comes
-  without OpenSSL, and Electron ships one language.
-- **App identity.** The app has its own icon, *Help → About Seed Scout*, and *What's new*, which also opens
-  by itself the first time a new version starts. Release notes list the changes since the previous version.
+Before that: the seed search itself, the terrain map with relief and contours, structure layers, saved seeds
+and the rare-find catalogue.
 
-- **Minecraft version picker.** The version shown at the top of the app is now a list of the installed
-  versions. Picking one compiles the engine against it and restarts on it; a version whose world-generation
-  code differs is refused with the reason and nothing changes. The choice is remembered.
-- **Updates ask first.** A new version is offered with Yes or No. No is remembered across restarts: nothing is
-  offered again until you update from *Help → Check for updates*, which sits above *About* and shows the
-  version on offer. *About* shows the app version, the update state and the Minecraft version in use.
+## Now
 
-- **Village, igloo and ocean ruin detail.** A confirmed village says when it is abandoned (zombie), an igloo
-  whether it has a basement, and an ocean ruin whether it is a single ruin or a cluster and of how many. Shown
-  on the feature card and on search results.
-- **Search by these traits.** The chooser for villages (Inhabitants), igloos (Basement options) and ocean
-  ruins (Sizes) filters a search condition, the same way shipwreck templates do: "igloo with basement within
-  500 blocks". Map layers cannot be filtered by them, because map markers are not built.
+### 1. Shake-down of the installed app
 
-- **First-run screen.** The empty map greets with the Minecraft version in use and two one-click starts: a
-  starter search and a random seed. In the desktop app it also points at the import menu.
-- **Start-up progress.** The loading screen names the stage (checking the install, compiling the engine), and
-  the page says it is loading the game's world generation until the engine is ready.
-- **Clearer errors.** A missing, partly downloaded or unsupported Minecraft version is explained in a sentence
-  with what to do, and the desktop app offers to choose another Minecraft folder or open the log.
-- **Odds and time before starting.** When the same conditions were searched before, the Find panel shows how
-  rare they were and roughly how long the wanted number of results will take.
-- **Saved condition presets**, beside the three built-in ones.
-- **A system notification when a long search finishes**, or one that ends while the window is out of sight.
-- **The last seed and view come back** when the app opens.
-- **Approximate height on overview zooms** in the status bar, marked with ≈.
+Several desktop-only pieces were built without ever being run in an installed copy: the update prompt (Yes / No
+and the remembered No), About and What's new, the import menu, the Settings panel's desktop buttons, and the
+start-up error dialog with "Choose Minecraft folder".
 
-- **Tags and a filter for saved seeds.** Each saved seed takes up to ten tags; the list filters by tag, note,
-  seed or feature.
-- **Copy a seed card.** One button copies a text card: seed, version, spawn, feature coordinates, tags and
-  notes. An image card is not done.
+- Walk through each once in the installed app and fix what misbehaves.
+- Add a smoke test to the release workflow: start the packaged app, wait for the engine to be ready, fetch one
+  tile, quit. A release that cannot start should fail the workflow instead of reaching users.
 
-- **Marker clusters.** Markers of one type that would overlap are drawn as one marker with a count; clicking it
-  zooms in.
-- **Settings in one place.** A Settings panel holds PC usage, terrain detail and the Minecraft version in use,
-  and in the desktop app the Minecraft folder, updates, import, the data folder and About.
-- **Fast terrain detail.** A Settings choice that halves the sampling, so terrain views need about a quarter of
-  the tiles. This is the answer to the slow 200-block scale for those who prefer speed over sharpness; the
-  default stays sharp.
-- **A surface teleport for buried structures.** The card's details give the open ground straight above the
-  structure as a second teleport, since the spot inside it is an estimate.
+*Done when:* every item above has been seen working, and the workflow refuses to publish a build that does not
+start.
+
+### 2. Real heights for surface structures
+
+0.1.13 predicts where a shipwreck ends up by running the game's own placement step on base terrain. The same
+approach fits the other structures that are built at a placeholder height and moved onto the terrain later:
+igloos, swamp huts, jungle temples, desert pyramids, ocean ruins and buried treasure. Today their card shows a
+ground height and the teleport lands beside them on a guess.
+
+- Compute the placed height and box for those types with the game's routine.
+- Use it for the card, the map footprint and the teleport, so "beside it" is beside the real walls and buried
+  treasure gives the chest's Y.
+
+*Done when:* the card shows the placed Y for each of those types and a test compares it with the game's
+routine, as the shipwreck one does.
+
+### 3. Waypoint export
+
+The card copies coordinates one at a time. Anyone who plays with a minimap wants the whole set in the game.
+
+- Export a seed's matches and pins as a waypoint file for Xaero's Minimap and for JourneyMap, with names,
+  colours taken from the marker colours, and the standing spot as the position.
+- One button on the saved seed and one in the Layers panel ("Export what is on the map").
+
+*Done when:* a file exported from Seed Scout loads in Xaero's Minimap and the waypoints sit on the structures.
 
 ## Next
 
-1. **Shipwreck loot.** Templates are a filter and shown on the card; which chests a template carries
-   (treasure, map, supply) is not shown yet.
-2. **Teleport spots checked in a real world.** The standing spots come from terrain and piece boxes, not placed
-   blocks. Each structure type needs a visit in the game to confirm the spot inside or beside it is open.
-3. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
-   Supporting ones where it does not means moving the engine's version-specific calls behind one small layer
-   per version. This needs a second, different version installed to build and test against.
-4. **Sharp terrain at the 200-block scale, faster.** With sharp detail it is still the slowest view. Three
-   attempts did not change that (a height-sliced whole tile was no faster; skipping the aquifer pass for open
-   ocean gained 3–5% and broke sea-floor heights; more workers give about 15%). What would is a hand-written
-   height calculation that shares work between neighbouring columns, which the game's own classes do not allow.
-5. **An image card for saved seeds**, beside the text one.
+### 4. Conditions on the spawn itself
+
+Every condition today is a distance from an origin. Common wishes that cannot be expressed:
+
+- **Spawn biome:** "spawn in a cherry grove", or "not in an ocean".
+- **Either / or:** "a village or a pillager outpost within 300 blocks" as one condition.
+- **Slime chunks:** "at least N slime chunks within 5 chunks of spawn", using the formula the map already has.
+
+*Done when:* each of the three can be added in Find, searched, and shown on the result.
+
+### 5. Search queue
+
+A search holds the app until it finishes, and only one set of conditions runs at a time.
+
+- Queue several condition sets (from saved presets) and run them one after another, each with its own budget.
+- Survive a restart: a queue in progress resumes where it stopped.
+- One notification when the whole queue is done, with matches per entry.
+
+*Done when:* three presets can be queued, the app closed and reopened halfway, and all three finish.
+
+### 6. Nether
+
+The card already shows Nether coordinates, but the Nether itself is invisible.
+
+- Nether structure layers (fortresses, bastions) drawn at their overworld-equivalent position, with the Nether
+  coordinates on the card.
+- Search conditions for them: "fortress within 300 Nether blocks of the spawn portal position".
+- A Nether biome map can follow; structures first, since they decide whether a seed is worth playing.
+
+*Done when:* a fortress and a bastion can be required in a search and are shown on the map.
 
 ## Later
 
-- **Shareable links.** A link or copyable string that opens a seed at a map position with its pins.
-- **Other dimensions.** Nether and End maps, starting with Nether structures, since the card already shows
-  Nether coordinates.
-- **Route planning.** Multi-point paths in the measure tool, with Nether-travel distances.
-- **In the browser.** A WebAssembly port of the biome layer for a hosted, serverless map. The Java engine stays
-  the reference for correctness.
+- **Legend that points:** click a biome in the legend to highlight it on the map and jump to its nearest patch.
+- **Height profile:** the measure tool shows the terrain profile along its line.
+- **Map image export:** save the current view as a PNG with the markers and scale bar.
+- **Named pins:** a name, a colour and a note on a pin, carried into the waypoint export.
+- **Shared seed links:** a link or string that opens a seed at a position with its pins, and importing one.
+
+## Parked
+
+Left alone until there is a reason to pick them up.
+
+- **Teleport spots checked in a real world.** Needs a visit in the game per structure type. Item 2 removes
+  most of the guesswork for surface structures.
+- **Minecraft versions the engine does not compile against.** Needs a second, different version installed to
+  build and test against.
+- **Sharp terrain at the 200-block scale, faster.** Fast detail in Settings is the workaround. Three attempts
+  at the sharp path did not help (a height-sliced whole tile was no faster; skipping the aquifer pass for open
+  ocean broke sea-floor heights; more workers give about 15%).
+- **Shipwreck loot** (which chests a template carries) and **an image version of the seed card**.
+- **A browser-only build** (WebAssembly biome map without a server).
