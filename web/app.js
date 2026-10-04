@@ -152,7 +152,7 @@ const realmOf = f => (f && f.kind === 'structure' && catalog?.dimensions?.[f.key
 const REALMS = { nether: 'Nether', end: 'The End' };
 const realmCommand = (realm, at) => `${realm ? `/execute in minecraft:the_${realm} run tp @s` : '/tp @s'} ${at.x} ${at.y} ${at.z}`;
 let catalog = null, kind = 'structure', state = {}, selectedSeed = null, manualResults = [], resultsSignature = null, toastTimer = 0;
-const fields = ['anchor', 'radius', 'x', 'z', 'threads', 'seed', 'limit', 'maxMatches', 'cluster', 'biomeMode'];
+const fields = ['anchor', 'radius', 'x', 'z', 'threads', 'seed', 'limit', 'maxMatches', 'cluster', 'biomeMode', 'leeway'];
 
 // PC usage presets: the share of the logical cores given to searches and to map tiles.
 const WORKER_STEPS = [1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 48, 64];
@@ -210,7 +210,7 @@ async function restoreLastView() {
 }
 // ---- Saved condition presets ---------------------------------------------
 // Beside the three built-in ones: the chosen features with their distances, and the search origin settings.
-const PRESET_FIELDS = ['anchor', 'radius', 'x', 'z', 'cluster', 'biomeMode'];
+const PRESET_FIELDS = ['anchor', 'radius', 'x', 'z', 'cluster', 'biomeMode', 'leeway'];
 function conditionPresets() { try { return JSON.parse(localStorage.getItem('seed-scout-condition-presets')) || []; } catch { return []; } }
 function renderConditionPresets() {
   $('saved-presets').innerHTML = conditionPresets().map((p, i) => `<span class="saved-preset"><button data-saved-preset="${i}" title="Use these conditions">${esc(p.name)}</button><button data-delete-preset="${i}" title="Delete this preset" aria-label="Delete preset ${esc(p.name)}">×</button></span>`).join('');
@@ -366,6 +366,16 @@ function landWish(c) {
   if (c.type === 'flat') return `${c.share}% level ground within ${fmt(c.radius)}`;
   if (c.type === 'hill') return `ground ${c.measure === 'y' ? `at Y ${c.rise}` : `${c.rise} blocks up`} ${fmt(c.minRadius)}–${fmt(c.radius)} away`;
   return `${c.shape === 'very' ? 'a very straight' : c.shape === 'fairly' ? 'a fairly straight' : 'a'} river within ${fmt(c.within)}, ${fmt(c.length)} long`;
+}
+// A result found with a leeway that misses what was asked: what it missed, one line each.
+const nearMiss = r => !r.close ? '' : `<div class="near-miss"><b>Close, not exact</b>${(r.misses || []).map(m => `<span>${esc(label(m.key))}: ${esc(m.text)}</span>`).join('')}</div>`;
+// What a finished or running search says about exact and close results, and what to try when it found nothing.
+function closeNote(s) {
+  const results = s.results || [], close = results.filter(r => r.close).length, leeway = Number(s.request?.leeway) || 0;
+  if (close) return ` ${fmt(results.length - close)} exact, ${fmt(close)} close (within ${leeway}%).`;
+  if (s.running || results.length || !s.tested) return '';
+  return leeway ? ` Nothing came within ${leeway}% of what was asked in these seeds, so the conditions may not be possible together.`
+    : ' Nothing matched. Set a leeway under Search controls to see whether anything comes close.';
 }
 const landScore = result => result.features.reduce((sum, f) => sum + (f.kind === 'terrain' ? f.score || 0 : 0), 0);
 function landRows() {
@@ -765,7 +775,7 @@ function renderWorld() {
   worldSignature = signature;
   $('places').innerHTML = places.slice(0, 500).map((p, i) => `<article class="result place" data-place="${i}" tabindex="0" role="button" aria-label="Show this place on the map">
       <div class="result-top"><code>X ${p.x} · Z ${p.z}</code><span>${fmt(p.distance)} blocks away</span></div>
-      <div class="chips">${p.features.map(f => `<span class="chip">${featureChip(f).replace(/<b>0<\/b>blocks$/, '')}</span>`).join('')}</div>
+      <div class="chips">${p.features.map(f => `<span class="chip">${featureChip(f).replace(/<b>0<\/b>blocks$/, '')}</span>`).join('')}</div>${nearMiss(p)}
     </article>`).join('') || (w.running ? '<p class="hint">Nothing yet. Places appear here as they are found.</p>' : '<p class="hint">No place matched in the area searched.</p>');
 }
 async function openPlace(place) {
@@ -860,7 +870,7 @@ function renderResults() {
     const manual = manualResults.some(m => m.seed === r.seed);
     return `<article class="result ${r.seed === selectedSeed ? 'active' : ''}" data-seed="${esc(r.seed)}" tabindex="0" role="button" aria-label="Open seed ${esc(r.seed)} on the map">
       <div class="result-top"><code>${esc(r.seed)}</code><span class="card-actions"><button class="icon-btn ${savedEntry(r.seed) ? 'active' : ''}" data-save="${esc(r.seed)}" title="${savedEntry(r.seed) ? 'Saved. Show it in Saved seeds' : 'Save this seed with notes'}" aria-label="Save seed ${esc(r.seed)}">${icon('bookmark')}</button><button class="btn small" data-copy="${esc(r.seed)}">${icon('copy')}Copy</button></span></div>
-      <div class="chips">${r.features.map((f, i) => `<button class="chip" data-feature="${i}" title="Show this ${esc(label(f.key).toLowerCase())} on the map">${featureChip(f)}</button>`).join('') || '<span class="chip plain">Opened without search conditions</span>'}</div>
+      <div class="chips">${r.features.map((f, i) => `<button class="chip" data-feature="${i}" title="Show this ${esc(label(f.key).toLowerCase())} on the map">${featureChip(f)}</button>`).join('') || '<span class="chip plain">Opened without search conditions</span>'}</div>${nearMiss(r)}
       <div class="result-meta" title="The world spawn point. Each player appears on a random block within 10 blocks of it.">${icon('spawn')}Spawn ${r.spawnX}, ${r.spawnZ}${r.spawnBiome ? ` in ${esc(label(r.spawnBiome).toLowerCase())}` : ''}${r.slimeChunks != null ? ` · ${r.slimeChunks} slime chunks nearby` : ''}${(r.anchor ? r.anchor === 'custom' : r.anchorX !== r.spawnX || r.anchorZ !== r.spawnZ) ? ` · measured from ${r.anchorX}, ${r.anchorZ}` : ''}${manual ? ' · added by you' : ''}${r.fromCatalogue ? ' · from your catalogue' : ''}</div>
     </article>`;
   }).join('') || `<div class="empty">${icon('list')}<h4>No worlds yet</h4><p>Matching seeds appear here as they’re found. Distances are in blocks.</p></div>`;
@@ -1256,7 +1266,7 @@ async function poll() {
   if (state.running && !fresh.running && !fresh.error) {
     // A search that ran for a while, or finished while the window was out of sight, is announced by the system too.
     if ((document.hidden || (fresh.seconds || 0) > 30) && window.Notification?.permission === 'granted') new Notification('Seed Scout search finished', { body: `${fmt(fresh.matches || 0)} match${fresh.matches === 1 ? '' : 'es'} from ${fmt(fresh.tested || 0)} checked seeds.` });
-    notice(`Search finished: ${fmt(fresh.matches || 0)} matches from ${fmt(fresh.tested || 0)} checked seeds.`);
+    notice(`Search finished: ${fmt(fresh.matches || 0)} matches from ${fmt(fresh.tested || 0)} checked seeds.${closeNote(fresh)}`);
     toast(fresh.catalogued ? `Search finished · ${fmt(fresh.matches || 0)} matches · rare combination added to your catalogue` : `Search finished · ${fmt(fresh.matches || 0)} matches`);
     loadCatalogue();
   }
@@ -1275,7 +1285,7 @@ async function poll() {
   else setStatus('ready', tested ? `${fmt(state.matches || 0)} match${state.matches === 1 ? '' : 'es'} found` : 'Ready');
   const known = state.catalogueMatches ? ` ${fmt(state.catalogueMatches)} came straight from your catalogue.` : '';
   $('results-summary').textContent = state.running ? (state.phase === 'catalogue' ? `Checking ${fmt(state.catalogueChecked || 0)} catalogued seeds first.` : `Searching from seed ${state.request?.seed}. The best matches rise to the top.${known}`)
-    : tested || state.matches ? `${fmt(state.matches || 0)} matches from ${fmt(tested)} new seeds, closest first.${known}` : 'Matching seeds appear here as they’re found.';
+    : tested || state.matches ? `${fmt(state.matches || 0)} matches from ${fmt(tested)} new seeds, closest first.${closeNote(state)}${known}` : 'Matching seeds appear here as they’re found.';
   $('progress').hidden = !state.running; $('progress').firstElementChild.style.width = `${limit ? Math.min(100, tested / limit * 100) : 0}%`;
   const canResume = !state.running && !!state.nextSeed;
   $('stop').hidden = $('stop-results').hidden = !state.running; $('stop').disabled = $('stop-results').disabled = false;

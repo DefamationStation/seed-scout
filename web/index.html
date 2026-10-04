@@ -122,6 +122,8 @@
           <label class="field"><span>Max gap <i>0 = off</i></span><input id="cluster" type="number" min="0" max="16000" value="0"></label>
         </div>
         <p class="hint">Max gap is the largest distance allowed between matches. It checks the nearest matches found and can miss a different valid grouping.</p>
+        <label class="field inline"><span>Leeway <i>0 = exact only</i></span><span class="with-unit"><input id="leeway" type="number" min="0" max="100" step="5" value="0"><i>%</i></span></label>
+        <p class="hint">With a leeway, results that miss a distance or a landscape threshold by up to this much are listed too, marked as close and after the exact ones. If a search finds nothing, a leeway shows whether anything comes near or the conditions cannot be met.</p>
       </details>
 
       <details class="group advanced seeds-only">

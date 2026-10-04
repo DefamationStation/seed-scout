@@ -22,9 +22,58 @@ def conditions(request):
     if request['anchor']=='custom': keep.update(x=request['x'],z=request['z'])
     keep['features']=sorted(({k:f[k] for k in ('kind','key','radius','mode','minRadius','count','id','near','variants','placements','templates','or') if k in f} for f in request['features']),key=lambda f:json.dumps(f,sort_keys=True))
     # Spawn conditions only appear when set, so searches without them keep the signature they always had.
-    keep.update({k:request[k] for k in ('spawnBiomes','spawnBiomeMode','slime','landscape') if k in request})
+    keep.update({k:request[k] for k in ('spawnBiomes','spawnBiomeMode','slime','landscape','leeway') if k in request})
     return keep
 def closeness(result): return sum(f['distance'] for f in result['features'])
+# Exact matches come before the ones that only hold with the leeway.
+def rank(result): return (bool(result.get('close')),closeness(result))
+def relaxed(request):
+    """The request the engine is given when a leeway is set: every distance and landscape threshold eased by that
+    share. Whatever it finds is then judged against the request as asked, so a result is either exact or close."""
+    ease=request['leeway']/100;out=copy.deepcopy(request)
+    for f in out['features']:
+        # What is avoided stays as asked: an avoided thing leaves nothing behind to judge a near miss by.
+        if f['mode']=='within': f['radius']=round(f['radius']*(1+ease));f['minRadius']=int(f['minRadius']*(1-ease))
+    for c in out.get('landscape',[]):
+        if c['type']=='coverage': c['share']=min(100,c['share']*(1+ease)) if c['mode']=='max' else c['share']*(1-ease)
+        elif c['type']=='flat': c['share']=c['share']*(1-ease)
+        elif c['type']=='hill':
+            if c['measure']=='above' and c['rise']>0: c['rise']=int(c['rise']*(1-ease))
+            c.update(across=int(c['across']*(1-ease)),radius=round(c['radius']*(1+ease)),minRadius=int(c['minRadius']*(1-ease)))
+        elif c['type']=='river':
+            c.update(within=round(c['within']*(1+ease)),length=int(c['length']*(1-ease)),width=int(c['width']*(1-ease)),shape={'very':'fairly','fairly':'any'}.get(c['shape'],'any'))
+    return out
+def judge(request,result):
+    """Mark a result found with a leeway as close when it misses what was asked, and say by how much."""
+    if not request.get('leeway'): return result
+    misses=[];found=result['features']
+    def miss(kind,key,text): misses.append({'kind':kind,'key':key,'text':text})
+    for f in request['features']:
+        if f['mode']!='within': continue
+        keys={f['key'],*(a['key'] for a in f.get('or',[]))}
+        for m in found:
+            if m.get('kind')!=f['kind'] or m['key'] not in keys or bool(m.get('near'))!=bool(f.get('near')): continue
+            if m['distance']>f['radius']: miss(m['kind'],m['key'],f"{m['distance']:,} blocks away, {m['distance']-f['radius']:,} further than asked")
+            elif m['distance']<f['minRadius']: miss(m['kind'],m['key'],f"{m['distance']:,} blocks away, {f['minRadius']-m['distance']:,} nearer than asked")
+    for c in request.get('landscape',[]):
+        m=next((m for m in found if m.get('kind')=='terrain' and m.get('index')==c['index']),None)
+        if m is None: continue
+        kind=c['type'];say=lambda text: miss('terrain',kind,text)
+        if kind=='coverage':
+            if (m['share']>c['share']) if c['mode']=='max' else (m['share']<c['share']): say(f"{m['share']}% where {'at most' if c['mode']=='max' else 'at least'} {c['share']}% was asked")
+        elif kind=='flat':
+            if m['share']<c['share']: say(f"{m['share']}% level where {c['share']}% was asked")
+        elif kind=='hill':
+            if c['measure']=='above' and m['rise']<c['rise']: say(f"{m['rise']} blocks up where {c['rise']} was asked")
+            if m['across']<c['across']: say(f"{m['across']} blocks across where {c['across']} was asked")
+            if m['distance']>c['radius'] or m['distance']<c['minRadius']: say(f"{m['distance']:,} blocks away, outside {c['minRadius']:,}–{c['radius']:,}")
+        elif kind=='river':
+            if m['distance']>c['within']: say(f"{m['distance']:,} blocks away where {c['within']:,} was asked")
+            if m['length']<c['length']: say(f"{m['length']:,} long where {c['length']:,} was asked")
+            if m['width']<c['width']: say(f"{m['width']} wide where {c['width']} was asked")
+            if {'straight':2,'fairly straight':1}.get(m['shape'],0)<{'very':2,'fairly':1}.get(c['shape'],0): say(f"{m['shape']} where {'very' if c['shape']=='very' else 'fairly'} straight was asked")
+    if misses: result.update(close=True,misses=misses)
+    return result
 
 class Catalogue:
     """Rare finds: the conditions of a search that proved hard to satisfy, the seeds that met them, and how many
@@ -129,7 +178,7 @@ class Engine:
                 elif event.get('id')==self.world.get('id'):
                     world=self.world
                     if kind=='place':
-                        place=event['data']
+                        place=judge(world['request'],event['data'])
                         # A ring that was only partly covered before a stop is searched again; its places are already listed.
                         if len(world['places'])<5000 and all((p['x'],p['z'])!=(place['x'],place['z']) for p in world['places']):
                             world['places'].append(place);world['places'].sort(key=lambda p:p['distance']);self.save_world()
@@ -141,7 +190,7 @@ class Engine:
                 elif event.get('id') in self.jobs:
                     # A check over an explicit list of seeds (catalogue pass or import), collected for run_list.
                     job=self.jobs[event['id']]
-                    if kind=='match': job['results'].append(event['data'])
+                    if kind=='match': job['results'].append(judge(job['request'],event['data']))
                     elif kind=='progress':
                         job['tested']=event['tested']
                         if job['search']: self.state['catalogueChecked']=event['tested']
@@ -152,8 +201,8 @@ class Engine:
                         self.state['matches']=len(self.state['results'])
                         if not event['running']: self.finish()
                     elif kind=='match' and all(r['seed']!=event['data']['seed'] for r in self.state['results']):
-                        self.state['results'].append(event['data'])
-                        self.state['results'].sort(key=closeness)
+                        self.state['results'].append(judge(self.state['request'],event['data']))
+                        self.state['results'].sort(key=rank)
                         self.state['matches']=len(self.state['results'])
                         self.save_results()
         with self.lock:
@@ -162,6 +211,8 @@ class Engine:
     def finish(self):
         """A search has ended: keep it in the catalogue if it turned out to be rare, then persist the results."""
         request=self.state['request'];fresh=[r for r in self.state['results'] if not r.get('fromCatalogue')]
+        # A search with a leeway also lists near misses, so it says nothing about how rare the conditions are.
+        if request.get('leeway'): return self.save_results()
         try:
             run={'start':request['seed'],'tested':self.state['tested'],'matches':len(fresh),'seconds':self.state['seconds']}
             find=self.catalogue.record(conditions(request),self.catalog['version'],[run],fresh,request['rareThreshold'])
@@ -170,7 +221,7 @@ class Engine:
         self.save_results()
     def run_list(self,request,seeds,search=False):
         """Check an explicit list of seeds against a request's conditions on the search workers."""
-        job={'results':[],'tested':0,'error':'','search':search,'done':threading.Event()};ident=self.next_id()
+        job={'results':[],'tested':0,'error':'','search':search,'request':request,'done':threading.Event()};ident=self.next_id()
         with self.lock: self.jobs[ident]=job
         try:
             self.send({**request,'cmd':'start','id':ident,'seeds':seeds})
@@ -188,7 +239,7 @@ class Engine:
                 for result in found: result['fromCatalogue']=True
             with self.lock:
                 if self.state.get('id')!=request['id']: return
-                self.state.update(results=sorted(found,key=closeness),matches=len(found),catalogueMatches=len(found),catalogueChecked=len(known),phase='search')
+                self.state.update(results=sorted(found,key=rank),matches=len(found),catalogueMatches=len(found),catalogueChecked=len(known),phase='search')
                 if self.stopping or len(found)>=request['maxMatches']:
                     self.state.update(running=False,nextSeed=request['seed']);self.save_results();return
                 self.send({**request,'maxMatches':request['maxMatches']-len(found)})
@@ -298,6 +349,8 @@ class Engine:
         seed=str(int(request['seed']))
         with self.lock: return self.write_saved([e for e in self.saved() if e['seed']!=seed])
     def send(self,request):
+        # A search with a leeway reaches the engine with its thresholds eased; the results are judged as they come back.
+        if request.get('leeway') and request.get('cmd') in ('start','world'): request=relaxed(request)
         with self.write_lock:
             self.process.stdin.write(json.dumps(request)+'\n'); self.process.stdin.flush()
     def next_id(self):
@@ -417,6 +470,9 @@ class Engine:
         if request['anchor'] not in ('spawn','custom'): raise ValueError('Invalid search origin.')
         for key in ('x','z'): request[key]=int(request.get(key,0))
         if any(abs(request[k])>1000000 for k in ('x','z')): raise ValueError('Search coordinates must be within ±1,000,000.')
+        request['leeway']=int(request.get('leeway') or 0)
+        if not 0<=request['leeway']<=100: raise ValueError('The leeway must be 0–100%.')
+        if not request['leeway']: request.pop('leeway')
         request['cluster']=int(request.get('cluster',0))
         if not 0<=request['cluster']<=16000: raise ValueError('Invalid cluster distance.')
         seed=request.get('seed','') or str(secrets.randbits(64)-(1<<63))
