@@ -572,6 +572,7 @@ const worldMap = (() => {
       box.innerHTML = `${head}
       <p class="place"><span><b>X</b> ${p.x}</span><span><b>Y</b> ${stand.y}</span><span><b>Z</b> ${p.z}</span></p>
       <p class="setting">${setting}<span>${biome}</span></p>
+      ${built?.valid && builtFact(built) ? `<p class="trait">${icon('check-circle')}${esc(builtFact(built))}</p>` : ''}
       ${built && !built.valid ? '<p class="notice error">The generation point is valid, but building the structure here produced no pieces.</p>' : ''}
       <div class="inspector-actions">
         <button class="btn small" id="info-tp" title="/tp @s ${stand.x} ${stand.y} ${stand.z}">${icon('terminal')}Copy /tp</button>

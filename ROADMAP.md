@@ -33,56 +33,59 @@ What comes next for Seed Scout, in the order it is planned. Items are specific t
   offered again until you update from *Help → Check for updates*, which sits above *About* and shows the
   version on offer. *About* shows the app version, the update state and the Minecraft version in use.
 
+- **Village, igloo and ocean ruin detail.** A confirmed village says when it is abandoned (zombie), an igloo
+  whether it has a basement, and an ocean ruin whether it is a single ruin or a cluster and of how many. Shown
+  on the feature card and on search results.
+- **Search by these traits.** The chooser for villages (Inhabitants), igloos (Basement options) and ocean
+  ruins (Sizes) filters a search condition, the same way shipwreck templates do: "igloo with basement within
+  500 blocks". Map layers cannot be filtered by them, because map markers are not built.
+
 ## Next
 
 ### Templates and variants
 
-1. **Shipwreck templates.** Which hull it is, whether it is beached and which chests it carries, as a filter
-   and on the card. *In progress in a separate thread.*
-2. **Village, igloo and ocean ruin detail.** Zombie villages, igloos with a basement, and single ruins against
-   clusters, shown on the feature card and on search results.
-3. **Search by template.** Filter a condition by these the way variants and portal placement work today
-   ("igloo with basement within 500 blocks"). Builds on the shipwreck template filter once that lands.
+1. **Shipwreck loot.** Templates are now a filter and shown on the card; which chests a template carries
+   (treasure, map, supply) is not shown yet.
 
 ### First run and empty states
 
-4. **A first-run screen** in the desktop app: the Minecraft version it found, a one-click starter search and
+2. **A first-run screen** in the desktop app: the Minecraft version it found, a one-click starter search and
    the import offer, instead of opening straight onto the form.
-5. **Engine start-up progress.** The loading screen shows one line for 10–15 seconds; show the real stages
+3. **Engine start-up progress.** The loading screen shows one line for 10–15 seconds; show the real stages
    (compiling, loading the game's data, ready).
-6. **Clearer errors.** An unsupported version or a missing library shows compiler text; give a plain sentence
+4. **Clearer errors.** An unsupported version or a missing library shows compiler text; give a plain sentence
    and what to do about it.
 
 ### Search
 
-7. **Time and odds before starting.** "About 1 in 40,000, roughly 9 minutes at this speed", from the rarity
+5. **Time and odds before starting.** "About 1 in 40,000, roughly 9 minutes at this speed", from the rarity
    the catalogue already records.
-8. **Condition presets you can save**, beside the three built-in ones.
-9. **A notification when a long search finishes**, in the desktop app.
+6. **Condition presets you can save**, beside the three built-in ones.
+7. **A notification when a long search finishes**, in the desktop app.
 
 ### Map
 
-10. **Biome search on the map.** "Nearest cherry grove from here", drawn as a marker with a line.
-11. **Biome and height under the pointer on overview zooms.** Height is hidden there today.
-12. **Remember the last opened seed and view** between sessions.
-13. **Marker clustering** at wide zooms, in place of overlapping dots.
+8. **Biome search on the map.** "Nearest cherry grove from here", drawn as a marker with a line.
+9. **Biome and height under the pointer on overview zooms.** Height is hidden there today.
+10. **Remember the last opened seed and view** between sessions.
+11. **Marker clustering** at wide zooms, in place of overlapping dots.
 
 ### Saved seeds
 
-14. **Tags and a filter**, in addition to free-text notes.
-15. **Export a seed as a card** (image or text): seed, version and key coordinates.
+12. **Tags and a filter**, in addition to free-text notes.
+13. **Export a seed as a card** (image or text): seed, version and key coordinates.
 
 ### Housekeeping
 
-16. **Settings in one place.** PC usage is inside Search controls, the Minecraft folder in the File menu and
+14. **Settings in one place.** PC usage is inside Search controls, the Minecraft folder in the File menu and
     updates in Help; one settings panel for all three.
-17. **Teleport you can trust.** The standing spot is computed from terrain and piece boxes, not placed blocks.
+15. **Teleport you can trust.** The standing spot is computed from terrain and piece boxes, not placed blocks.
     Check every structure type in a real world, fix the ones that land inside a block, and add a safe variant
     (a few blocks up, with slow falling) for the types that stay uncertain.
-18. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
+16. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
     Supporting ones where it does not means moving the engine's version-specific calls behind one small layer
     per version. This needs a second, different version installed to build and test against.
-19. **The 200-block scale.** Still the slowest view, and three attempts did not change that, so it is parked:
+17. **The 200-block scale.** Still the slowest view, and three attempts did not change that, so it is parked:
     - a whole tile computed over a slice of the height range matched the game but was no faster (14.8 against
       13.7 ms per tile);
     - accepting open-ocean columns without the aquifer pass gained 3–5% and got about 400 sea-floor heights

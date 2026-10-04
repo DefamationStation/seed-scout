@@ -94,7 +94,7 @@ public final class SeedEngine {
         for(String family:List.of("ruined_portals","huge_ruined_portals"))
             for(var placement:RuinedPortalPiece.VerticalPlacement.values())if(placement!=RuinedPortalPiece.VerticalPlacement.IN_NETHER)
                 sets.put(family+"_"+placement.getSerializedName(),sets.get("ruined_portals"));
-        for(String family:List.of("villages","mineshafts","ocean_ruins","shipwrecks","abandoned_camp","ruined_portals","huge_ruined_portals")) {
+        for(String family:List.of("villages","mineshafts","ocean_ruins","shipwrecks","abandoned_camp","igloos","ruined_portals","huge_ruined_portals")) {
             var holder=sets.get(family);var variants=new ArrayList<String>();
             for(var entry:holder.value().structures())if(entry.structure().value().biomes().stream().anyMatch(generator.getBiomeSource().possibleBiomes()::contains)) {
                 String detail=entry.structure().unwrapKey().orElseThrow().identifier().getPath(),key=family+"__"+detail;
@@ -103,6 +103,10 @@ public final class SeedEngine {
             structureVariants.put(family,variants);
         }
         structureTemplates.put("shipwrecks",templates.listTemplates().filter(id->id.getNamespace().equals("minecraft")&&id.getPath().startsWith("shipwreck/")).map(Identifier::getPath).distinct().sorted().toList());
+        // For these the "template" is a trait of the built structure rather than a template file; see templateOf.
+        structureTemplates.put("villages",List.of("inhabited","abandoned"));
+        structureTemplates.put("ocean_ruins",List.of("single","cluster"));
+        structureTemplates.put("igloos",List.of("basement","no_basement"));
         generator.getBiomeSource().possibleBiomes().forEach(h->h.unwrapKey().ifPresent(k->biomeNames.put(k.identifier().getPath(),k.identifier().toString())));
         emit(Map.of("type","ready","version",SharedConstants.getCurrentVersion().id(),"sets",sets.keySet(),"biomes",biomeNames.keySet(),"cores",CORES,"mapWorkers",MAP_THREADS,"structureVariants",structureVariants,"variantDetails",variantDetails,"structureTemplates",structureTemplates));
     }
@@ -280,6 +284,7 @@ public final class SeedEngine {
             "box",Map.of("minX",box.minX(),"minY",box.minY(),"minZ",box.minZ(),"maxX",box.maxX(),"maxY",box.maxY(),"maxZ",box.maxZ()),"pieces",hit.start.getPieces().size()));
         if(set==set("ruined_portals"))portalFacts(result,hit);
         if(set==set("shipwrecks"))result.put("shipwreckTemplate",shipwreckTemplate(hit));
+        builtFacts(result,hit,set);
         result.put("stand",stand(hit,state));
         return result;
     }
@@ -411,6 +416,26 @@ public final class SeedEngine {
     static boolean hugePortal(Start hit) {
         return Identifier.parse(portalTag(hit).getStringOr("Template","")).getPath().startsWith("ruined_portal/giant_portal_");
     }
+    // What only a built start can tell about a structure, beyond its type:
+    // a village's town centre comes from the zombie pools in an abandoned village; an igloo with a basement has the
+    // ladder and laboratory as extra pieces; an ocean ruin that is a cluster has its smaller ruins as extra ones.
+    static boolean zombieVillage(Start hit) { return hit.start.getPieces().get(0) instanceof PoolElementStructurePiece centre&&centre.getElement().toString().contains("/zombie/"); }
+    static int ruinCount(Start hit) { return hit.start.getPieces().size()/(hit.detail().endsWith("cold")?3:1); }
+    // The value a condition's "templates" filter is matched against, for the families listed in structureTemplates.
+    static String templateOf(StructureSet set,Start hit) {
+        if(set==set("villages"))return zombieVillage(hit)?"abandoned":"inhabited";
+        if(set==set("igloos"))return hit.start.getPieces().size()>1?"basement":"no_basement";
+        if(set==set("ocean_ruins"))return ruinCount(hit)>1?"cluster":"single";
+        return shipwreckTemplate(hit);
+    }
+    static void builtFacts(Map<String,Object> result,Start hit,StructureSet set) {
+        if(hit.start==null)return;
+        var pieces=hit.start.getPieces();
+        if(set==set("villages"))result.put("zombie",zombieVillage(hit));
+        else if(set==set("igloos"))result.put("basement",pieces.size()>1);
+        // A cold ruin is three overlaid pieces (stone brick, cracked, mossy); a warm one is a single piece.
+        else if(set==set("ocean_ruins"))result.put("ruins",ruinCount(hit));
+    }
     static void portalFacts(Map<String,Object> result,Start hit) {
         var tag=portalTag(hit);String template=Identifier.parse(tag.getStringOr("Template","")).getPath();
         result.put("portalTemplate",template);
@@ -502,7 +527,7 @@ public final class SeedEngine {
             if(hit==null||!f.variants.isEmpty()&&!f.variants.contains(hit.detail()))continue;
             if(!f.templates.isEmpty()) {
                 if(hit.start==null)hit=startAt(set,seed,state,structState,climate,c,true);
-                if(hit==null||!f.templates.contains(shipwreckTemplate(hit)))continue;
+                if(hit==null||!f.templates.contains(templateOf(set,hit)))continue;
             }
             if(!f.placements.isEmpty()) {
                 if(hit.start==null)hit=startAt(set,seed,state,structState,climate,c,true);
@@ -519,6 +544,7 @@ public final class SeedEngine {
             var match=new LinkedHashMap<>(found(f,new BlockPos(pos.getX(),hit.y,pos.getZ()),x,z,hit.detail(),confirm?"Snapshot structure start confirmed":"Snapshot generation point confirmed"));
             if(hit.start!=null&&set==set("ruined_portals"))portalFacts(match,hit);
             if(hit.start!=null&&set==set("shipwrecks"))match.put("shipwreckTemplate",shipwreckTemplate(hit));
+            builtFacts(match,hit,set);
             out.add(match);
             out.addAll(extra);taken++;
         }

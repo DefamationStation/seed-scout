@@ -92,7 +92,7 @@ const STRUCTURES = {
   shipwrecks: ['Shipwreck', 'ship', 'ocean'], buried_treasures: ['Buried treasure', 'chest', 'ocean'],
 };
 const label = key => STRUCTURES[key]?.[0] || String(key).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
-const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks', 'abandoned_camp', 'ruined_portals', 'huge_ruined_portals'];
+const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks', 'abandoned_camp', 'igloos', 'ruined_portals', 'huge_ruined_portals'];
 const PORTAL_FAMILIES = ['ruined_portals', 'huge_ruined_portals'];
 const isPortalFamily = family => PORTAL_FAMILIES.includes(family);
 const PORTAL_PLACEMENTS = ['on_land_surface', 'partly_buried', 'on_ocean_floor', 'in_mountain', 'underground'];
@@ -103,7 +103,11 @@ function shipTemplateName(template) {
   const orientation = name.startsWith('upsidedown') ? 'Upside down' : name.startsWith('sideways') ? 'Sideways' : 'Upright';
   return `${shape} · ${orientation} · ${degraded ? 'Degraded' : 'Non-degraded'}`;
 }
-const familyName = key => ({ villages: 'Villages', mineshafts: 'Mineshafts', ocean_ruins: 'Ocean ruins', shipwrecks: 'Shipwrecks', abandoned_camp: 'Abandoned camps', ruined_portals: 'Ruined portals (any size)', huge_ruined_portals: 'Huge ruined portals' })[key] || label(key);
+// Shipwreck templates are template files. For the other families the engine reads a trait from the built structure.
+const TRAITS = { inhabited: 'Inhabited', abandoned: 'Abandoned (zombie)', single: 'Single ruin', cluster: 'Cluster of ruins', basement: 'With basement', no_basement: 'No basement' };
+const templateName = (family, template) => family === 'shipwrecks' ? shipTemplateName(template) : TRAITS[template] || label(template);
+const templateTitle = family => ({ shipwrecks: 'Ship templates', villages: 'Inhabitants', ocean_ruins: 'Sizes', igloos: 'Basement options' })[family] || 'Templates';
+const familyName = key => ({ igloos: 'Igloos', villages: 'Villages', mineshafts: 'Mineshafts', ocean_ruins: 'Ocean ruins', shipwrecks: 'Shipwrecks', abandoned_camp: 'Abandoned camps', ruined_portals: 'Ruined portals (any size)', huge_ruined_portals: 'Huge ruined portals' })[key] || label(key);
 function variantName(family, detail) {
   if (family === 'mineshafts') return detail === 'mineshaft' ? 'Normal' : 'Badlands';
   if (family === 'shipwrecks') return detail === 'shipwreck' ? 'Regular' : 'Beached';
@@ -215,7 +219,7 @@ function familyFilterDescription(f) {
   if (!f) return '';
   return [Array.isArray(f.variants) ? f.variants.length === 1 ? variantName(f.key, f.variants[0]) : f.variants.length ? `${f.variants.length} variants` : 'No variants selected' : '',
     Array.isArray(f.placements) ? f.placements.length ? f.placements.map(label).join(' or ') : 'No placements selected' : '',
-    Array.isArray(f.templates) ? f.templates.length === 1 ? shipTemplateName(f.templates[0]) : f.templates.length ? `${f.templates.length} templates` : 'No templates selected' : ''].filter(Boolean).join(' · ');
+    Array.isArray(f.templates) ? f.key !== 'shipwrecks' ? f.templates.map(t => templateName(f.key, t)).join(' or ') || 'None selected' : f.templates.length === 1 ? shipTemplateName(f.templates[0]) : f.templates.length ? `${f.templates.length} templates` : 'No templates selected' : ''].filter(Boolean).join(' · ');
 }
 const conditionName = f => `${label(f.key)}${familyFilterDescription(f) ? ` (${familyFilterDescription(f)})` : ''}`;
 // The starting seed is deliberately not remembered: left blank, every search starts from a new random seed.
@@ -324,13 +328,15 @@ function renderSubcategories() {
   const { family, mode } = subcategoryContext, config = mode === 'find' ? chosen.get(`structure:${family}`) : worldMap.features().find(f => f.key === family) || {};
   $('subcategory-options').classList.toggle('portal-options', isPortalFamily(family));
   const variants = familyVariants(family).map(key => ({ key, value: catalog.variantDetails[key], name: variantName(family, catalog.variantDetails[key]) }));
-  const groups = [{ title: isPortalFamily(family) ? 'Biome variants' : family === 'shipwrecks' ? 'Location types' : 'Variants', field: 'variants', options: variants }];
+  // A family with one variant (igloos) has nothing to choose there.
+  const groups = variants.length > 1 ? [{ title: isPortalFamily(family) ? 'Biome variants' : family === 'shipwrecks' ? 'Location types' : 'Variants', field: 'variants', options: variants }] : [];
   if (isPortalFamily(family)) groups.push({ title: 'Placements', field: 'placements', options: PORTAL_PLACEMENTS.filter(p => catalog?.sets.includes(`${family}_${p}`)).map(p => ({ key: `${family}_${p}`, value: p, name: label(p) })) });
-  const templates = familyTemplates(family);
-  if (templates.length) groups.push({ title: 'Ship templates', field: 'templates', options: templates.map(t => ({ key: family, value: t, name: shipTemplateName(t) })) });
+  // Map markers are only built for shipwrecks, so the other families' traits can filter a search but not a layer.
+  const templates = mode === 'find' || family === 'shipwrecks' ? familyTemplates(family) : [];
+  if (templates.length) groups.push({ title: templateTitle(family), field: 'templates', options: templates.map(t => ({ key: family, value: t, name: templateName(family, t) })) });
   const option = (name, key, field, value, checked) => `<label class="subcategory-option"><input type="checkbox" data-subkey="${esc(key)}" data-subfield="${field}" value="${esc(value)}" ${checked ? 'checked' : ''}><span>${esc(name)}</span></label>`;
   const selected = (field, value) => !!config && (!Array.isArray(config[field]) || (value === '*' ? groups.find(g => g.field === field).options.every(o => config[field].includes(o.value)) : config[field].includes(value)));
-  $('subcategory-options').innerHTML = (mode === 'find' ? option(templates.length ? 'Any location type or template' : isPortalFamily(family) ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && SUBCATEGORY_FILTERS.every(field => !config[field])) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
+  $('subcategory-options').innerHTML = (mode === 'find' ? option(family === 'shipwrecks' ? 'Any location type or template' : templates.length ? `Any ${familyName(family).toLowerCase()}` : isPortalFamily(family) ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && SUBCATEGORY_FILTERS.every(field => !config[field])) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
 }
 $('subcategory-options').onchange = e => {
   const el = e.target.closest('[data-subkey]'); if (!el || !subcategoryContext) return;
@@ -439,7 +445,9 @@ $('inspect').onclick = async () => {
 
 // ---- Results -------------------------------------------------------------
 // Chip text for a matched feature: distance from the origin, or from the match it was measured from.
-const featureChip = f => `${glyph(f.kind, f.key)}${esc(label(f.key))}<b>${fmt(f.distance)}</b>${f.near ? `from ${esc(label(f.near.key).toLowerCase())}` : 'blocks'}`;
+// What a built structure turned out to be, beyond its type: read from its pieces by the engine.
+const builtFact = f => f.zombie ? 'Abandoned (zombie)' : f.basement === true ? 'With basement' : f.basement === false ? 'No basement' : f.ruins > 1 ? `Cluster of ${f.ruins}` : f.ruins === 1 ? 'Single ruin' : '';
+const featureChip = f => `${glyph(f.kind, f.key)}${esc(label(f.key))}${f.zombie || f.basement || f.ruins > 1 ? `<i>${esc(builtFact(f).toLowerCase())}</i>` : ''}<b>${fmt(f.distance)}</b>${f.near ? `from ${esc(label(f.near.key).toLowerCase())}` : 'blocks'}`;
 const allResults = () => [...manualResults, ...(state.results || [])].filter((r, i, a) => a.findIndex(x => x.seed === r.seed) === i);
 function selectSeed(result) { selectedSeed = result.seed; renderResults(); worldMap.show(result); }
 async function openSeed(seed) {
@@ -665,7 +673,7 @@ function renderLayers() {
   document.querySelector('.master [data-layer]').checked = worldMap.layers.structures;
   $('feature-layers').classList.toggle('off', !worldMap.layers.structures);
   $('feature-layers').innerHTML = worldMap.features().map(f => `<div class="feature-layer" data-row="${esc(f.key)}">
-    ${STRUCTURE_FAMILIES.includes(f.key) ? `<button type="button" class="layer-category" data-layer-category="${esc(f.key)}" aria-pressed="${f.on}">${glyph('structure', f.key)}<span class="toggle-text"><b>${esc(familyName(f.key))}</b><small></small></span></button><button type="button" class="subcategory-arrow" data-layer-subcategories="${esc(f.key)}" aria-label="Choose ${esc(familyName(f.key))} subcategories" title="Choose subcategories">${icon('chevron')}</button>` : `${glyph('structure', f.key)}<span class="toggle-text"><b>${esc(label(f.key))}</b><small></small></span>`}
+    ${STRUCTURE_FAMILIES.includes(f.key) && familyVariants(f.key).length > 1 ? `<button type="button" class="layer-category" data-layer-category="${esc(f.key)}" aria-pressed="${f.on}">${glyph('structure', f.key)}<span class="toggle-text"><b>${esc(familyName(f.key))}</b><small></small></span></button><button type="button" class="subcategory-arrow" data-layer-subcategories="${esc(f.key)}" aria-label="Choose ${esc(familyName(f.key))} subcategories" title="Choose subcategories">${icon('chevron')}</button>` : `${glyph('structure', f.key)}<span class="toggle-text"><b>${esc(label(f.key))}</b><small></small></span>`}
     <select data-from="${esc(f.key)}" title="Zoom level ${esc(label(f.key))} appears at" aria-label="Zoom level ${esc(label(f.key))} appears at">${worldMap.ZOOM_STOPS.map(stop => `<option value="${stop}" ${stop === f.from ? 'selected' : ''}>${zoomName(stop)}</option>`).join('')}</select>
     <label class="switch-wrap"><input type="checkbox" data-feature="${esc(f.key)}" ${f.on ? 'checked' : ''} aria-label="Show ${esc(label(f.key))}"><i class="switch"></i></label>
   </div>`).join('');
