@@ -8,6 +8,8 @@ from build import ROOT, DATA, prepare, chosen_version, installed_versions
 SAVED=DATA/'saved-seeds.json'
 CATALOGUE=DATA/'catalogue.db'
 SETTINGS=DATA/'settings.json'
+WORLD_EDGE=29999984
+EMPTY_WORLD={'running':False,'seed':'','places':[],'regions':0,'ring':0,'covered':0,'seconds':0,'error':'','complete':False,'anchor':None}
 TILE_POOL=ThreadPoolExecutor(48,thread_name_prefix='tile')
 
 def number(request,key):
@@ -96,6 +98,12 @@ class Engine:
                 previous=json.loads(saved.read_text(encoding='utf-8'))
                 if previous.get('engineRevision')==2: self.state=previous;self.state.update(running=False,error='');self.state.pop('id',None)
             except (ValueError,OSError): pass
+        # The search inside one seed: every place found so far and how far out it has looked, kept across restarts.
+        self.world=copy.deepcopy(EMPTY_WORLD)
+        try:
+            kept=json.loads((DATA/'runtime/last-world-search.json').read_text(encoding='utf-8'))
+            if isinstance(kept.get('places'),list): self.world={**self.world,**kept,'running':False,'error':''};self.world.pop('id',None)
+        except (OSError,ValueError): pass
         threading.Thread(target=self.read,daemon=True).start()
     def read(self):
         for line in self.process.stdout:
@@ -117,6 +125,19 @@ class Engine:
                     if waiter: waiter[1].append({'error':event['message']});waiter[0].set()
                     elif event.get('id') in self.jobs: self.jobs[event['id']].update(error=event['message']);self.jobs[event['id']]['done'].set()
                     elif event.get('id')==self.state.get('id'): self.state.update(error=event['message'],running=False)
+                    elif event.get('id')==self.world.get('id'): self.world.update(error=event['message'].split(': ',1)[-1],running=False)
+                elif event.get('id')==self.world.get('id'):
+                    world=self.world
+                    if kind=='place':
+                        place=event['data']
+                        # A ring that was only partly covered before a stop is searched again; its places are already listed.
+                        if len(world['places'])<5000 and all((p['x'],p['z'])!=(place['x'],place['z']) for p in world['places']):
+                            world['places'].append(place);world['places'].sort(key=lambda p:p['distance']);self.save_world()
+                    elif kind=='worldprogress':
+                        world.update(regions=world['baseRegions']+event['regions'],seconds=world['baseSeconds']+event['seconds'],ring=max(world['fromRing'],event['ring']),
+                                     covered=max(world.get('covered',0),event['covered']) if event['ring']>=world['fromRing'] else world.get('covered',0),
+                                     running=event['running'],error=event.get('error',''),complete=event['complete'],anchor=event['anchor'],originX=event['originX'],originZ=event['originZ'])
+                        if not event['running']: self.save_world()
                 elif event.get('id') in self.jobs:
                     # A check over an explicit list of seeds (catalogue pass or import), collected for run_list.
                     job=self.jobs[event['id']]
@@ -175,6 +196,48 @@ class Engine:
             with self.lock: self.state.update(running=False,error=str(error))
     def stop(self):
         self.stopping=True;self.send({'cmd':'stop'})
+    def save_world(self):
+        target=DATA/'runtime/last-world-search.json';temp=target.with_suffix('.tmp')
+        temp.write_text(json.dumps(self.world),encoding='utf-8');os.replace(temp,target)
+    def world_start(self,request):
+        """Search inside one seed for every place where the conditions hold, or continue the last such search."""
+        if self.catalog is None: raise ValueError('Snapshot engine is still starting.')
+        with self.lock:
+            if self.state['running'] or self.busy or self.world.get('running'): raise ValueError('Stop the current search before starting another.')
+            old=self.world
+        cores=max(8,int(self.catalog.get('cores',8)))
+        if request.get('resume'):
+            if not old.get('request') or old.get('complete'): raise ValueError('There is no unfinished search of a seed to continue.')
+            wanted=copy.deepcopy(old['request']);places=old['places'];ring=old.get('ring',0)
+            base=dict(baseSeconds=old.get('seconds',0),baseRegions=old.get('regions',0),covered=old.get('covered',0))
+            for key in ('threads','maxMatches'):
+                if key in request: wanted[key]=request[key]
+        else:
+            if not str(request.get('seed','')).strip(): raise ValueError('Enter the seed to search inside.')
+            wanted=self.validate(copy.deepcopy(request));places=[];ring=0;base=dict(baseSeconds=0,baseRegions=0,covered=0)
+            # Spawn conditions describe a seed, not a place in it.
+            for key in ('spawnBiomes','spawnBiomeMode','slime','resume'): wanted.pop(key,None)
+            if not any(f['mode']=='within' and not f.get('near') and not f.get('or') for f in wanted['features']):
+                raise ValueError('Searching inside a seed needs at least one structure or biome you want to find (not one you avoid, and without alternatives).')
+            wanted['range']=int(request.get('range') or WORLD_EDGE)
+            if not 1024<=wanted['range']<=WORLD_EDGE: raise ValueError(f'Search between 1,024 and {WORLD_EDGE:,} blocks from the origin.')
+        wanted['threads']=int(wanted.get('threads') or 4);wanted['maxMatches']=int(wanted.get('maxMatches') or 50)
+        if not 1<=wanted['threads']<=cores: raise ValueError(f'Use 1–{cores} workers.')
+        if not 1<=wanted['maxMatches']<=500: raise ValueError('Stop after 1–500 places; you can keep searching afterwards.')
+        wanted={k:v for k,v in wanted.items() if k not in ('cmd','id','fromRing')}
+        with self.lock:
+            ident=self.next_id()
+            self.world={**copy.deepcopy(EMPTY_WORLD),'id':ident,'running':True,'seed':wanted['seed'],'request':wanted,'places':places,'ring':ring,'fromRing':ring,
+                        'range':wanted['range'],'regions':base['baseRegions'],'seconds':base['baseSeconds'],**base}
+            self.send({**wanted,'cmd':'world','id':ident,'fromRing':ring,'known':[[p['x'],p['z']] for p in places]})
+        return {'seed':wanted['seed']}
+    def world_stop(self): self.send({'cmd':'worldstop'})
+    def world_clear(self):
+        with self.lock:
+            if self.world.get('running'): raise ValueError('Stop the search first.')
+            self.world=copy.deepcopy(EMPTY_WORLD)
+            with contextlib.suppress(OSError): (DATA/'runtime/last-world-search.json').unlink()
+        return {'ok':True}
     def catalogue_import(self,payload):
         if not isinstance(payload,dict) or payload.get('format')!='seed-scout-catalogue': raise ValueError('This is not a Seed Scout catalogue file.')
         with self.lock:
@@ -332,7 +395,7 @@ class Engine:
         if not 100<=request['rareThreshold']<=100000000: raise ValueError('The rare-find threshold must be 100–100,000,000 seeds per match.')
         request['useCatalogue']=bool(request.get('useCatalogue',True))
         with self.lock:
-            if self.state['running'] or self.busy: raise ValueError('Stop the current search before starting another.')
+            if self.state['running'] or self.busy or self.world.get('running'): raise ValueError('Stop the current search before starting another.')
             request.update(cmd='start',id=self.next_id());self.stopping=False
             self.state={'id':request['id'],'running':True,'phase':'catalogue','tested':0,'matches':0,'seconds':0,'results':[],'error':'','catalogueChecked':0,'catalogueMatches':0,'request':copy.deepcopy(request),'engineRevision':2}
         threading.Thread(target=self.launch,args=(request,),daemon=True).start()
@@ -469,7 +532,7 @@ def switch_version(server,request):
     with SWITCHING:
         old=server.engine
         with old.lock:
-            if old.state['running'] or old.busy: raise ValueError('Stop the current search before changing the Minecraft version.')
+            if old.state['running'] or old.busy or old.world.get('running'): raise ValueError('Stop the current search before changing the Minecraft version.')
         if version==old.version: return {'version':version}
         try: prepare(version)
         except (RuntimeError,OSError) as error: raise ValueError(str(error)) from None
@@ -535,7 +598,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.engine.tile_batch(request),cache='private, max-age=31536000, immutable')
             except (ValueError,KeyError,TypeError) as error: return self.reply({'error':str(error)},400)
         if self.path=='/api/status':
-            with self.server.engine.lock: data=copy.deepcopy(self.server.engine.state);data.update(ready=self.server.engine.catalog is not None,catalog=self.server.engine.catalog)
+            with self.server.engine.lock: data=copy.deepcopy(self.server.engine.state);data.update(ready=self.server.engine.catalog is not None,catalog=self.server.engine.catalog,world={k:v for k,v in self.server.engine.world.items() if k!='id'})
             return self.reply(data)
         if self.path=='/api/versions': return self.reply({'current':self.server.engine.version,'versions':installed_versions()})
         if self.path=='/api/saved': return self.reply({'seeds':self.server.engine.saved()})
@@ -564,6 +627,9 @@ class Handler(BaseHTTPRequestHandler):
             request=json.loads(self.rfile.read(size))
             if self.path=='/api/start': result=self.server.engine.start(request)
             elif self.path=='/api/stop': self.server.engine.stop();result={'ok':True}
+            elif self.path=='/api/world-start': result=self.server.engine.world_start(request)
+            elif self.path=='/api/world-stop': self.server.engine.world_stop();result={'ok':True}
+            elif self.path=='/api/world-clear': result=self.server.engine.world_clear()
             elif self.path=='/api/inspect': result=self.server.engine.inspect(request)
             elif self.path=='/api/tile': result=self.server.engine.tile(request)
             elif self.path=='/api/point': result=self.server.engine.map_request(request,'point')

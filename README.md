@@ -86,6 +86,31 @@ npm start                                  # run from this checkout, using this 
 npm run dist                               # build the installer into desktop/dist
 ```
 
+## Searching inside one seed
+
+*Find → Inside one seed* looks through a single world instead of through many seeds. Enter the seed, choose
+what to look for, and it reports every place where the conditions hold, nearest to the origin first (the world
+spawn, or coordinates you give).
+
+- **What a place is.** One condition is the anchor: the rarest structure you asked for (strongholds first, then
+  the widest-spaced structure), or the first biome when there is no structure. Every anchor found is a candidate
+  place, and your other conditions are measured from it with their own distances, exactly as a seed search
+  measures them from the spawn. Avoid conditions and conditions measured from another one work the same way.
+  The anchor's own distance and count are not used.
+- **How far.** *Search out to* goes from 10,000 blocks to the whole world (29,999,984 blocks each way). The world
+  is cut into 4,096-block regions taken in a square spiral from the origin, on as many workers as Settings allows.
+- **How long.** On this PC a group search covers 300–400 regions a second: 100,000 blocks in a few seconds,
+  1,000,000 in about ten minutes, the world border in about a week. Asking for every village with no other condition
+  is far slower (about 5 regions a second), because every reported structure is fully built.
+- **Stopping and continuing.** It stops after the number of places you set (up to 500 at a time) or when you
+  press Stop; *Keep searching* carries on from the ring it reached. Places and progress are saved in
+  `runtime/last-world-search.json` and are still there after a restart.
+- **Biomes as the anchor** are sampled every 64 blocks on the biome source and confirmed on real terrain; one
+  place is reported per region, the patch nearest the origin.
+- **Opening a place** shows the seed on the map at that spot with its features marked.
+
+A seed search and a search inside a seed cannot run at the same time.
+
 ## Conditions on the spawn
 
 Under *Search around* in Find:

@@ -121,6 +121,8 @@ public final class SeedEngine {
                 String command=request.has("cmd")?request.get("cmd").getAsString():"inspect";
             if(command.equals("start")) { if(active!=null && active.finished.get()<active.threads)throw new IllegalStateException("Stop the current search first"); active=new Job(request); active.start(); }
                 else if(command.equals("stop")) { if(active!=null)active.running.set(false); }
+                else if(command.equals("world")) { if(world!=null && world.finished.get()<world.threads)throw new IllegalStateException("Stop the current search of this seed first"); world=new WorldJob(request); world.start(); }
+                else if(command.equals("worldstop")) { if(world!=null)world.running.set(false); }
                 else if(command.equals("config")) {
                     // The pool grows by raising the maximum first and shrinks by lowering the core size first.
                     int threads=Math.clamp(request.get("mapThreads").getAsInt(),1,CORES);
@@ -379,6 +381,17 @@ public final class SeedEngine {
             if(slime<rule.get("count").getAsInt())return null;
         }
         var structState=ChunkGeneratorStructureState.createForNormal(state,seed,origin,generator.getBiomeSource(),access.lookupOrThrow(Registries.STRUCTURE_SET));
+        var found=around(seed,state,structState,parsed,x,z,request,job);
+        if(found==null)return null;
+        var result=new LinkedHashMap<String,Object>();result.put("seed",Long.toString(seed));result.put("spawnX",origin.getMiddleBlockX());result.put("spawnZ",origin.getMiddleBlockZ());
+        result.put("anchorX",x);result.put("anchorZ",z);result.put("features",found);result.put("version",SharedConstants.getCurrentVersion().id());
+        result.put("spawnAccuracy","Snapshot spawn-region estimate; final player spawn may shift.");
+        result.put("spawnBiome",spawnBiome!=null?spawnBiome:surfaceBiome(seed,state,origin.getMiddleBlockX(),origin.getMiddleBlockZ()));
+        if(slime>=0)result.put("slimeChunks",slime);
+        return result;
+    }
+    // Every condition measured from the block position (x, z): the matches to report, or null when one fails.
+    static List<Map<String,Object>> around(long seed,RandomState state,ChunkGeneratorStructureState structState,List<Feature> parsed,int x,int z,JsonObject request,Job job) {
         var groups=new ArrayList<List<Map<String,Object>>>();var chosen=new Feature[parsed.size()];
         String biomeMode=request.has("biomeMode")?request.get("biomeMode").getAsString():"terrain";
         // Pass 1 tests structures with the generation-point check the game uses for /locate,
@@ -417,12 +430,7 @@ public final class SeedEngine {
         if(cluster>0)for(var a:found)for(var b:found) {
             if(Math.hypot(((Number)a.get("x")).intValue()-((Number)b.get("x")).intValue(),((Number)a.get("z")).intValue()-((Number)b.get("z")).intValue())>cluster)return null;
         }
-        var result=new LinkedHashMap<String,Object>();result.put("seed",Long.toString(seed));result.put("spawnX",origin.getMiddleBlockX());result.put("spawnZ",origin.getMiddleBlockZ());
-        result.put("anchorX",x);result.put("anchorZ",z);result.put("features",found);result.put("version",SharedConstants.getCurrentVersion().id());
-        result.put("spawnAccuracy","Snapshot spawn-region estimate; final player spawn may shift.");
-        result.put("spawnBiome",spawnBiome!=null?spawnBiome:surfaceBiome(seed,state,origin.getMiddleBlockX(),origin.getMiddleBlockZ()));
-        if(slime>=0)result.put("slimeChunks",slime);
-        return result;
+        return found;
     }
     // Gate on one necessary positive root condition. Never prune on exclusions,
     // dependent conditions, biome samples, or unsupported placement types.
@@ -564,11 +572,15 @@ public final class SeedEngine {
     }
     // Adds matches to out, nearest first, until `limit` of them are found, and returns how many that was.
     // With companions, a match only counts where they hold too, and their matches are reported straight after it.
+    // {left, top, right, bottom} in blocks (right and bottom exclusive): when set, only structures located inside count.
+    static final ThreadLocal<int[]> ONLY_INSIDE=new ThreadLocal<>();
     static int findStructures(Feature f,long seed,RandomState state,ChunkGeneratorStructureState structState,int x,int z,Job job,List<Map<String,Object>> out,int limit,boolean confirm,BiFunction<BlockPos,Boolean,List<Map<String,Object>>> companions) {
         var set=set(f.key); var placement=set.placement();
         int minX=Math.floorDiv(x-f.radius-32,16),maxX=Math.floorDiv(x+f.radius+32,16),minZ=Math.floorDiv(z-f.radius-32,16),maxZ=Math.floorDiv(z+f.radius+32,16);
         ToDoubleFunction<ChunkPos> distance=c->Math.hypot(placement.getLocatePos(c).getX()-x,placement.getLocatePos(c).getZ()-z);
-        var candidates=candidates(placement,seed,structState,minX,maxX,minZ,maxZ).filter(c->{double d=distance.applyAsDouble(c);return d>=f.minRadius&&d<=f.radius;}).sorted(Comparator.comparingDouble(distance)).toList();
+        int[] box=ONLY_INSIDE.get();
+        var candidates=candidates(placement,seed,structState,minX,maxX,minZ,maxZ).filter(c->{double d=distance.applyAsDouble(c);return d>=f.minRadius&&d<=f.radius;})
+            .filter(c->{if(box==null)return true;var at=placement.getLocatePos(c);return at.getX()>=box[0]&&at.getZ()>=box[1]&&at.getX()<box[2]&&at.getZ()<box[3];}).sorted(Comparator.comparingDouble(distance)).toList();
         var climate=state.createClimateSampler(SamplerContext.EMPTY_UNCACHED);
         int taken=0;
         for(var c:candidates) {
@@ -636,6 +648,122 @@ public final class SeedEngine {
             return found(f,new BlockPos(bx,confirmedY,bz),x,z,"32-block candidate scan; block-biome boundary and terrain height checked",cave?"Snapshot cave-biome point confirmed":"Snapshot surface-biome point confirmed");
         }
         return null;
+    }
+    // ---- Searching inside one seed -------------------------------------------
+    // Every place in one world where the conditions hold, nearest to the origin first, out to the world border.
+    // One condition is the anchor: the rarest structure asked for (or, with no structure, the first biome). The world
+    // is cut into 4,096-block regions taken in a square spiral from the origin; every anchor in a region is tested
+    // with the other conditions measured from it, exactly as a seed search measures them from the spawn.
+    static volatile WorldJob world;
+    static final int WORLD_EDGE=29999984;
+    static final class WorldJob {
+        static final int REGION=4096;
+        final long id,seed;final JsonObject request;final Feature anchor;final List<Feature> others;final int threads,maxMatches,range;final long limit;
+        volatile int ox,oz;
+        final AtomicBoolean running=new AtomicBoolean(true);final AtomicInteger matches=new AtomicInteger(),finished=new AtomicInteger();final LongAdder regions=new LongAdder();
+        long next;final java.util.TreeSet<Long> unfinished=new java.util.TreeSet<>();
+        // Places already reported by an earlier run of this search; a continued search looks again at the ring it stopped in.
+        final Set<Long> known=ConcurrentHashMap.newKeySet();
+        final long began=System.nanoTime();volatile String failure="";ScheduledFuture<?> reporting;
+        synchronized long claim(){if(next>=limit)return -1;unfinished.add(next);return next++;}
+        synchronized void complete(long index){unfinished.remove(index);}
+        synchronized long checkpoint(){return unfinished.isEmpty()?next:unfinished.first();}
+        // Ring 0 is the region around the origin; ring k is the square of regions k steps out, 8k of them.
+        static int ring(long index){return (int)Math.ceil((Math.sqrt(index+1)-1)/2);}
+        static int[] region(long index) {
+            if(index==0)return new int[]{0,0};
+            int k=ring(index),side=2*k;long offset=index-(2L*k-1)*(2L*k-1);int edge=(int)(offset/side),at=(int)(offset%side);
+            return switch(edge){case 0->new int[]{k,-k+1+at};case 1->new int[]{k-1-at,k};case 2->new int[]{-k,k-1-at};default->new int[]{-k+1+at,-k};};
+        }
+        WorldJob(JsonObject r) {
+            request=r;id=r.get("id").getAsLong();seed=Long.parseLong(r.get("seed").getAsString());threads=r.get("threads").getAsInt();maxMatches=r.get("maxMatches").getAsInt();range=r.get("range").getAsInt();
+            var parsed=parseFeatures(r.getAsJsonArray("features"));
+            // The anchor is the condition with the fewest candidates: ring structures (128 strongholds in a world), then the widest spacing.
+            var roots=parsed.stream().filter(f->!f.exclude&&f.near==null&&f.or.isEmpty()).toList();
+            ToDoubleFunction<Feature> rarity=f->set(f.key).placement() instanceof RandomSpreadStructurePlacement spread?spread.spacing():set(f.key).placement() instanceof ConcentricRingsStructurePlacement?1e9:1;
+            anchor=roots.stream().filter(f->f.kind.equals("structure")).max(Comparator.comparingDouble(rarity)).orElseGet(()->roots.stream().filter(f->f.kind.equals("biome")).findFirst().orElse(null));
+            if(anchor==null)throw new IllegalArgumentException("Searching a seed needs at least one structure or biome you want to find, without alternatives.");
+            // Conditions that were measured from the anchor are now simply measured from the place being tested.
+            others=parsed.stream().filter(f->f!=anchor).map(f->anchor.id!=null&&anchor.id.equals(f.near)?new Feature(f.kind,f.key,f.radius,f.minRadius,f.count,f.exclude,f.id,null,f.variants,f.placements,f.templates,f.or):f).toList();
+            int rings=Math.min((int)Math.ceil((double)range/REGION)+1,(WORLD_EDGE*2)/REGION+2);
+            limit=(2L*rings+1)*(2L*rings+1);
+            int from=r.has("fromRing")?Math.max(0,r.get("fromRing").getAsInt()):0;
+            next=from==0?0:(2L*from-1)*(2L*from-1);
+            if(r.has("known"))for(var item:r.getAsJsonArray("known")){var at=item.getAsJsonArray();known.add(((long)at.get(0).getAsInt()<<32)^(at.get(1).getAsInt()&0xffffffffL));}
+        }
+        void report(boolean done) {
+            long at=checkpoint();int complete=at>=limit?ring(limit-1)+1:ring(at);
+            var progress=new LinkedHashMap<String,Object>(Map.of("type","worldprogress","id",id,"regions",regions.sum(),"ring",complete,"covered",Math.max(0,complete*REGION-REGION/2),"matches",Math.min(matches.get(),maxMatches),
+                "seconds",(System.nanoTime()-began)/1e9,"running",!done,"error",failure,"complete",at>=limit));
+            progress.put("anchor",Map.of("kind",anchor.kind,"key",anchor.key));progress.put("originX",ox);progress.put("originZ",oz);
+            emit(progress);
+        }
+        void start() {
+            reporting=PROGRESS.scheduleAtFixedRate(()->report(false),0,500,TimeUnit.MILLISECONDS);
+            for(int i=0;i<threads;i++){var worker=new Thread(()->{
+                try {
+                    var state=RandomState.create(access.lookupOrThrow(Registries.NOISE),seed,generator.generatorSettings().value());
+                    var origin=generator.getOrigin(state);
+                    boolean custom=request.has("anchor")&&request.get("anchor").getAsString().equals("custom");
+                    ox=custom?request.get("x").getAsInt():origin.getMiddleBlockX();oz=custom?request.get("z").getAsInt():origin.getMiddleBlockZ();
+                    var structState=ChunkGeneratorStructureState.createForNormal(state,seed,origin,generator.getBiomeSource(),access.lookupOrThrow(Registries.STRUCTURE_SET));
+                    while(running.get()){long index=claim();if(index<0)break;scan(index,state,structState);if(!running.get())break;regions.increment();complete(index);}
+                }
+                catch(Throwable e){failure=e.toString();running.set(false);e.printStackTrace(System.err);}
+                finally{if(finished.incrementAndGet()==threads){running.set(false);reporting.cancel(false);report(true);}}
+            },"world-worker-"+i);
+            worker.setPriority(Thread.NORM_PRIORITY-1);worker.start();}
+        }
+        void scan(long index,RandomState state,ChunkGeneratorStructureState structState) {
+            int[] cell=region(index);
+            long left=(long)ox+(long)cell[0]*REGION-REGION/2,top=(long)oz+(long)cell[1]*REGION-REGION/2;
+            // Regions wholly past the world border, or wholly beyond the range asked for, hold nothing to find.
+            if(left>WORLD_EDGE||top>WORLD_EDGE||left+REGION<-WORLD_EDGE||top+REGION<-WORLD_EDGE)return;
+            double nearX=Math.max(0,Math.max(left-ox,ox-(left+REGION))),nearZ=Math.max(0,Math.max(top-oz,oz-(top+REGION)));
+            if(Math.hypot(nearX,nearZ)>range)return;
+            int cx=(int)(left+REGION/2),cz=(int)(top+REGION/2);
+            var anchors=new ArrayList<Map<String,Object>>();
+            if(anchor.kind.equals("structure")) {
+                var wide=new Feature("structure",anchor.key,REGION*724/1024+2,0,1,false,null,null,anchor.variants,anchor.placements,anchor.templates,List.of());
+                ONLY_INSIDE.set(new int[]{(int)left,(int)top,(int)(left+REGION),(int)(top+REGION)});
+                try { findStructures(wide,seed,state,structState,cx,cz,null,anchors,Integer.MAX_VALUE,false,null); }
+                finally { ONLY_INSIDE.remove(); }
+            } else biomePlaces(state,(int)left,(int)top,anchors);
+            for(var candidate:anchors) {
+                if(!running.get())return;
+                int x=((Number)candidate.get("x")).intValue(),z=((Number)candidate.get("z")).intValue();
+                double distance=Math.hypot(x-ox,z-oz);
+                if(distance>range||Math.abs(x)>WORLD_EDGE||Math.abs(z)>WORLD_EDGE||known.contains(((long)x<<32)^(z&0xffffffffL)))continue;
+                var found=around(seed,state,structState,others,x,z,request,null);
+                if(found==null)continue;
+                var features=new ArrayList<Map<String,Object>>();
+                if(anchor.kind.equals("structure")) {
+                    // The cheap generation-point check found it; the start is built now, as every reported structure is.
+                    var exact=new Feature("structure",anchor.key,8,0,1,false,null,null,anchor.variants,anchor.placements,anchor.templates,List.of());
+                    if(findStructures(exact,seed,state,structState,x,z,null,features,1,true,null)<1)continue;
+                } else features.add(candidate);
+                features.addAll(found);
+                int count=matches.incrementAndGet();
+                if(count<=maxMatches)emit(Map.of("type","place","id",id,"data",Map.of("x",x,"y",features.get(0).get("y"),"z",z,"distance",Math.round(distance),"features",features)));
+                if(count>=maxMatches){running.set(false);return;}
+            }
+        }
+        // A biome anchor: the region is sampled every 64 blocks on the biome source alone, and the sample nearest the
+        // origin that the full check confirms stands for the whole region. One place per region is enough to go and look.
+        void biomePlaces(RandomState state,int left,int top,List<Map<String,Object>> out) {
+            var resolver=generator.getBiomeSource().createUncachedResolver(state);
+            boolean cave=anchor.key.equals("deep_dark")||anchor.key.equals("lush_caves")||anchor.key.equals("dripstone_caves")||anchor.key.equals("sulfur_caves");
+            int y=QuartPos.fromBlock(cave?-32:256);
+            var hits=new ArrayList<int[]>();
+            for(int bz=top;bz<top+REGION;bz+=64)for(int bx=left;bx<left+REGION;bx+=64)if(is(resolver.getNoiseBiome(QuartPos.fromBlock(bx),y,QuartPos.fromBlock(bz)),anchor.key))hits.add(new int[]{bx,bz});
+            hits.sort(Comparator.comparingDouble(h->Math.hypot(h[0]-ox,h[1]-oz)));
+            String mode=request.has("biomeMode")?request.get("biomeMode").getAsString():"terrain";
+            var close=new Feature("biome",anchor.key,96,0,1,false,null,null,List.of(),List.of(),List.of(),List.of());
+            for(int i=0;i<hits.size()&&i<6;i++) {
+                var confirmed=findBiome(close,seed,state,hits.get(i)[0],hits.get(i)[1],null,mode);
+                if(confirmed!=null){out.add(new LinkedHashMap<>(confirmed));return;}
+            }
+        }
     }
     static final class Job {
         final List<Feature> parsed;final Feature spawnGate;

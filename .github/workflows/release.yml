@@ -61,6 +61,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The page's own tests run on Node alone; a failure stops the release.
+      - name: Run the page tests
+        shell: bash
+        working-directory: .
+        run: |
+          for test in tests/*.js; do
+            case "$test" in *map_browser_bench*) continue;; esac
+            echo "== $test"; node "$test"
+          done
+
       - name: Fetch the bundled Python and build the Java runtime
         shell: pwsh
         run: ./vendor.ps1

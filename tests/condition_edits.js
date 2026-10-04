@@ -8,7 +8,9 @@ const condition = {kind:'structure',key:'huge_ruined_portals',radius:1000,minRad
 const chosen = new Map([[id,condition]]);
 let inputs = ['count','minRadius','radius'].map(field=>({dataset:{id,field},value:field==='radius'?'100':field==='count'?'1':'0'}));
 const context = {chosen,fields:['radius'],$:key=>key==='chosen'?{querySelectorAll:()=>inputs}:{value:'1000'},
-  mergeFamilyConditions:()=>{},renderFeatures:()=>{},renderChosen:()=>{},save:()=>{},familyName:x=>x,isPortalFamily:()=>true};
+  mergeFamilyConditions:()=>{},renderFeatures:()=>{},renderChosen:()=>{},save:()=>{},familyName:x=>x,isPortalFamily:()=>true,
+  // The request also carries the spawn conditions, which live outside the slice of app.js run here.
+  spawnRules:{biomeMode:'any',biomes:[],slimeCount:0,slimeRadius:5}};
 const core = app.slice(app.indexOf('function updateConditionField('),app.indexOf("$('features').onchange"));
 vm.runInNewContext(core+'\nglobalThis.buildRequest=request;',context);
 let request = context.buildRequest();

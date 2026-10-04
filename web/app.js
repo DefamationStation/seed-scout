@@ -302,6 +302,9 @@ function familyFilterDescription(f) {
 }
 const conditionName = f => `${label(f.key)}${familyFilterDescription(f) ? ` (${familyFilterDescription(f)})` : ''}`;
 // The starting seed is deliberately not remembered: left blank, every search starts from a new random seed.
+// Whether Find searches many seeds or inside one; declared early because the buttons depend on it from the start.
+let searchMode = 'seeds';
+try { if (localStorage.getItem('seed-scout-search-mode') === 'world') searchMode = 'world'; } catch { }
 // Conditions on the spawn itself; restored with the other settings just below.
 const spawnRules = { biomeMode: 'any', biomes: [], slimeCount: 0, slimeRadius: 5 };
 const spawnRulesActive = () => (spawnRules.biomeMode !== 'any' && spawnRules.biomes.length > 0) || spawnRules.slimeCount > 0;
@@ -359,7 +362,8 @@ function renderChosen() {
 }
 function syncButtons() {
   const emptyFilter = [...chosen.values()].some(f => SUBCATEGORY_FILTERS.some(field => f[field]?.length === 0));
-  $('start').disabled = !catalog || state.running || (!chosen.size && !spawnRulesActive()) || emptyFilter;
+  $('start').disabled = !catalog || state.running || state.world?.running || (searchMode === 'world' ? ![...chosen.values()].some(f => f.mode !== 'exclude') : (!chosen.size && !spawnRulesActive())) || emptyFilter;
+  worldHint();
   $('inspect').disabled = !catalog || (!chosen.size && !spawnRulesActive()) || emptyFilter;
 }
 function updateConditionField(el) {
@@ -540,7 +544,81 @@ async function startSearch(fromSeed) {
     await poll();
   } catch (e) { notice(e.message, true); }
 }
-$('start').onclick = () => startSearch();
+// ---- Searching inside one seed --------------------------------------------
+// Instead of many seeds near their spawn: every place in one seed where the conditions hold, measured from the
+// rarest structure asked for, nearest to the origin first and out to the world border if left running.
+const WORLD_EDGE = 29999984;
+function syncSearchMode() {
+  const world = searchMode === 'world';
+  $('find-body').classList.toggle('world-mode', world);
+  document.querySelectorAll('[data-search-mode]').forEach(b => b.classList.toggle('active', b.dataset.searchMode === searchMode));
+  $('origin-title').textContent = world ? 'Nearest to' : 'Search around';
+  $('start').lastChild.textContent = world ? 'Search this seed' : 'Start searching';
+  if (world && !$('world-seed').value.trim()) $('world-seed').value = worldMap.seed() || state.world?.seed || '';
+  worldHint(); syncButtons();
+}
+function worldHint() {
+  if (searchMode !== 'world') return;
+  const wanted = [...chosen.values()].filter(f => f.mode !== 'exclude');
+  $('world-hint').textContent = !wanted.length ? 'Choose what to look for below.'
+    : `Finds every place in this seed with ${wanted.map(f => label(f.key).toLowerCase()).join(', ')}${[...chosen.values()].some(f => f.mode === 'exclude') ? ' and none of what you avoid' : ''}. `
+      + (chosen.size > 1 ? 'The rarest structure in the list is the place; the other distances are measured from it, not from spawn. ' : '')
+      + 'Places come nearest first. The whole world is 60 million blocks across, so reaching the border can take days; you can stop and keep searching later.';
+}
+document.querySelectorAll('[data-search-mode]').forEach(b => { b.onclick = () => { searchMode = b.dataset.searchMode; try { localStorage.setItem('seed-scout-search-mode', searchMode); } catch { } syncSearchMode(); }; });
+async function startWorldSearch(resume = false) {
+  try {
+    const wanted = request();
+    for (const key of ['spawnBiomes', 'spawnBiomeMode', 'slime']) delete wanted[key];
+    const payload = resume ? { resume: true, threads: $('threads').value, maxMatches: Number($('world-max').value) || 50 }
+      : { ...wanted, seed: $('world-seed').value.trim(), range: Number($('world-range').value), maxMatches: Number($('world-max').value) || 50, threads: $('threads').value };
+    if (window.Notification?.permission === 'default') Notification.requestPermission().catch(() => { });
+    await api('/api/world-start', payload);
+    notice(resume ? 'Searching further out in the same seed.' : `Searching inside seed ${payload.seed}.`);
+    openPanel('results', true);
+    await poll();
+  } catch (e) { notice(e.message, true); toast(e.message, true); }
+}
+$('world-stop').onclick = async () => { try { await api('/api/world-stop', {}); $('world-stop').disabled = true; } catch (e) { toast(e.message, true); } };
+$('world-resume').onclick = () => startWorldSearch(true);
+$('world-clear').onclick = async () => { try { await api('/api/world-clear', {}); await poll(); } catch (e) { toast(e.message, true); } };
+const longDuration = seconds => seconds < 5400 ? duration(seconds) : seconds < 172800 ? `${(seconds / 3600).toFixed(1)} hours` : `${(seconds / 86400).toFixed(1)} days`;
+let worldSignature = '', worldSpawn = {};
+function renderWorld() {
+  const w = state.world || {}, places = w.places || [], shown = w.running || places.length > 0 || !!w.request;
+  $('world-results').hidden = !shown;
+  if (!shown) return;
+  $('world-title').textContent = `Places in seed ${w.seed}`;
+  $('world-count').textContent = `${fmt(places.length)} found`;
+  const range = Math.min(w.range || WORLD_EDGE, WORLD_EDGE), covered = Math.min(w.covered || 0, range), share = (covered / range) ** 2;
+  const left = w.running && share > 0 && share < 1 && w.seconds > 5 ? ` · about ${longDuration(w.seconds * (1 - share) / share)} to reach ${range >= WORLD_EDGE ? 'the world border' : `${fmt(range)} blocks`} at this speed` : '';
+  $('world-progress').textContent = (w.anchor ? `Every ${label(w.anchor.key).toLowerCase()}${(w.request?.features?.length || 1) > 1 ? ' with your other conditions around it' : ''}. ` : '')
+    + (w.complete ? `Searched everything within ${fmt(range)} blocks.` : `${covered ? `Covered ${fmt(covered)} blocks in every direction` : 'Still within the first 2,048 blocks'}${share >= .0001 ? ` (${(share * 100).toFixed(share < .01 ? 2 : 1)}% of the area)` : ''} in ${longDuration(w.seconds || 0)}${left}.`)
+    + (w.error ? ` ${w.error}` : '');
+  $('world-bar').hidden = !w.running; $('world-bar').firstElementChild.style.width = `${Math.max(1, share * 100)}%`;
+  $('world-stop').hidden = !w.running; if (!w.running) $('world-stop').disabled = false;
+  $('world-resume').hidden = w.running || w.complete || !w.request; $('world-clear').hidden = w.running;
+  const signature = `${w.seed}:${places.length}:${places[0]?.x}:${places[places.length - 1]?.x}`;
+  if (signature === worldSignature) return;
+  worldSignature = signature;
+  $('places').innerHTML = places.slice(0, 500).map((p, i) => `<article class="result place" data-place="${i}" tabindex="0" role="button" aria-label="Show this place on the map">
+      <div class="result-top"><code>X ${p.x} · Z ${p.z}</code><span>${fmt(p.distance)} blocks away</span></div>
+      <div class="chips">${p.features.map(f => `<span class="chip">${featureChip(f).replace(/<b>0<\/b>blocks$/, '')}</span>`).join('')}</div>
+    </article>`).join('') || (w.running ? '<p class="hint">Nothing yet. Places appear here as they are found.</p>' : '<p class="hint">No place matched in the area searched.</p>');
+}
+async function openPlace(place) {
+  const w = state.world;
+  try {
+    const base = worldSpawn[w.seed] ||= await api('/api/open', { seed: w.seed, x: 0, z: 0 });
+    const result = { ...base, seed: w.seed, anchorX: place.x, anchorZ: place.z, features: place.features.map(f => ({ ...f })) };
+    manualResults = manualResults.filter(r => r.seed !== result.seed); manualResults.unshift(result);
+    selectSeed(result); worldMap.jump(place.x, place.z, 2);
+    if (narrow()) openPanel('map');
+  } catch (e) { toast(e.message, true); }
+}
+$('places').onclick = e => { const card = e.target.closest('[data-place]'); if (card) openPlace(state.world.places[Number(card.dataset.place)]); };
+$('places').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-place]')) { e.preventDefault(); e.target.click(); } };
+$('start').onclick = () => searchMode === 'world' ? startWorldSearch() : startSearch();
 async function stopSearch() {
   try { await api('/api/stop', {}); notice('Stopping after the current checks…'); $('stop').disabled = $('stop-results').disabled = true; }
   catch (e) { notice(e.message, true); toast(e.message, true); }
@@ -1008,6 +1086,11 @@ async function poll() {
     toast(fresh.catalogued ? `Search finished · ${fmt(fresh.matches || 0)} matches · rare combination added to your catalogue` : `Search finished · ${fmt(fresh.matches || 0)} matches`);
     loadCatalogue();
   }
+  if (state.world?.running && fresh.world && !fresh.world.running) {
+    const found = fresh.world.places?.length || 0;
+    toast(`Search inside the seed ${fresh.world.complete ? 'finished' : 'stopped'} · ${fmt(found)} place${found === 1 ? '' : 's'}`);
+    if ((document.hidden || (fresh.world.seconds || 0) > 30) && window.Notification?.permission === 'granted') new Notification('Seed Scout: search inside the seed', { body: `${fmt(found)} place${found === 1 ? '' : 's'} found, ${fmt(fresh.world.covered || 0)} blocks covered.` });
+  }
   state = fresh;
   const tested = state.tested || 0, limit = Number(state.request?.limit) || 0;
   $('tested').textContent = fmt(tested); $('matches').textContent = fmt(state.matches || 0);
@@ -1025,7 +1108,7 @@ async function poll() {
   $('resume').hidden = $('resume-results').hidden = !canResume; $('run-actions').hidden = !state.running && !canResume;
   syncButtons();
   if (state.error) notice(state.error, true);
-  renderResults();
+  renderResults(); renderWorld();
 }
-syncAnchor(); renderLayers(); renderPresets(); renderConditionPresets(); renderSpawnRules(); renderChosen(); openPanel('find', true); loadSaved().then(loadCatalogue); poll();
+syncAnchor(); renderLayers(); renderPresets(); renderConditionPresets(); renderSpawnRules(); syncSearchMode(); renderChosen(); openPanel('find', true); loadSaved().then(loadCatalogue); poll();
 const timer = setInterval(poll, 1000);
