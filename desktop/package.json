@@ -1,7 +1,7 @@
 {
   "name": "seed-scout",
   "productName": "Seed Scout",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Find Minecraft seeds by the structures and biomes near spawn, with a terrain map.",
   "author": "DefamationStation",
   "private": true,
@@ -22,18 +22,52 @@
   "build": {
     "appId": "com.defamationstation.seedscout",
     "productName": "Seed Scout",
-    "directories": { "output": "dist" },
-    "files": ["main.js", "loading.html"],
-    "extraResources": [
-      { "from": "../app.py", "to": "app/app.py" },
-      { "from": "../build.py", "to": "app/build.py" },
-      { "from": "../src", "to": "app/src" },
-      { "from": "../web", "to": "app/web" },
-      { "from": "vendor/python", "to": "python" },
-      { "from": "vendor/jdk", "to": "jdk" }
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "loading.html"
     ],
-    "win": { "target": "nsis" },
-    "nsis": { "oneClick": true, "perMachine": false, "artifactName": "Seed-Scout-Setup-${version}.${ext}" },
-    "publish": { "provider": "github", "owner": "DefamationStation", "repo": "seed-scout", "releaseType": "release" }
+    "extraResources": [
+      {
+        "from": "../app.py",
+        "to": "app/app.py"
+      },
+      {
+        "from": "../build.py",
+        "to": "app/build.py"
+      },
+      {
+        "from": "../src",
+        "to": "app/src"
+      },
+      {
+        "from": "../web",
+        "to": "app/web"
+      },
+      {
+        "from": "vendor/python",
+        "to": "python"
+      },
+      {
+        "from": "vendor/jdk",
+        "to": "jdk"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Seed-Scout-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "DefamationStation",
+      "repo": "seed-scout",
+      "releaseType": "release"
+    }
   }
 }
