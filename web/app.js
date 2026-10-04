@@ -169,7 +169,7 @@ $('version').onchange = async () => {
   catch (e) { select.value = select.dataset.current; select.disabled = false; toast(e.message, true); }
 };
 // ---- First run and returning --------------------------------------------
-$('empty-search').onclick = () => { document.querySelector('[data-preset="starter"]').click(); startSearch(); };
+$('empty-search').onclick = () => { chooseExample(); startSearch(); };
 $('empty-random').onclick = () => openSeed(String(BigInt.asIntN(64, crypto.getRandomValues(new BigUint64Array(1))[0])));
 // The seed and view that were on screen last time come back when the app opens.
 let lastViewTimer = 0;
@@ -522,13 +522,13 @@ document.querySelectorAll('[data-kind]').forEach(el => el.onclick = () => {
   $('features').scrollTop = 0; renderFeatures();
 });
 $('filter').oninput = renderFeatures;
-document.querySelectorAll('[data-preset]').forEach(el => el.onclick = () => {
+// The first-run example: a village near a cherry grove.
+function chooseExample() {
   if (!catalog) return;
   chosen.clear();
-  const pair = el.dataset.preset === 'starter' ? ['villages', 'cherry_grove'] : el.dataset.preset === 'island' ? ['villages', 'mushroom_fields'] : ['villages', 'trial_chambers'];
-  for (const key of pair) { const k = catalog.sets.includes(key) ? 'structure' : 'biome'; chosen.set(`${k}:${key}`, condition(k, key)); }
+  for (const key of ['villages', 'cherry_grove']) { const k = catalog.sets.includes(key) ? 'structure' : 'biome'; chosen.set(`${k}:${key}`, condition(k, key)); }
   renderFeatures(); renderChosen(); save();
-});
+}
 
 // Seeds are tried in order from the starting seed. A blank starting seed picks a random one each time;
 // resuming continues from where the last run stopped without changing what is typed in the field.
