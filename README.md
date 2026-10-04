@@ -9,6 +9,7 @@ Find Minecraft Java seeds with the structures and biomes you want, then explore 
 ## What it does
 
 - **Find seeds:** combine structures, biomes, distances, counts and exclusions around spawn or custom coordinates. Look for a village near a cherry grove, several ancient cities together, or a fortress near your first Nether portal.
+- **Ask for a landscape:** a large plains, flat ground to build on, a hill in reach, or a river of a given length, width and straightness. Results can be ranked by how well they fit.
 - **Search an existing seed:** find places within one world that match your conditions.
 - **Explore the map:** view Overworld terrain, biomes, structures and slime chunks. Inspect locations and copy coordinates or teleport commands.
 - **Keep your finds:** save seeds with notes, resume searches, and import or export your rare-find catalogue.

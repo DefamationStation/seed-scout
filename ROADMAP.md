@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Seed Scout stands after 0.1.20 and what comes next. The plan is short on purpose: a few target wins, in
+Where Seed Scout stands after 0.1.22 and what comes next. The plan is short on purpose: a few target wins, in
 order, each with what "done" looks like.
 
 ## Shipped so far
@@ -24,6 +24,8 @@ order, each with what "done" looks like.
 | 0.1.17 – 0.1.18 | Built-in condition presets removed; Electron 44, pinned build inputs, only the two newest releases kept |
 | 0.1.19 | The spawn point as the game stores it; a tidier chooser for structure types |
 | 0.1.20 | Nether and End structures as search conditions: fortress, bastion remnant (by kind), nether fossil, Nether ruined portal, end city (with or without ship) |
+| 0.1.21 | A picker for biomes to have near the spawn, beside the spawn biome |
+| 0.1.22 | Landscape conditions: biome coverage, flat ground, high ground and a river (length, width, straightness), ranked by fit |
 
 Before that: the seed search itself, the terrain map with relief and contours, structure layers, saved seeds
 and the rare-find catalogue.
