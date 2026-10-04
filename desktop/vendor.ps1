@@ -1,7 +1,9 @@
 # Fetches what the installed app brings with it, into desktop/vendor:
 #   python  the official embeddable Python (the backend only uses the standard library)
 #   jdk     a trimmed Java runtime with the compiler, built by jlink from the JDK in -Jdk or JAVA_HOME
-param([string]$Jdk = $env:JAVA_HOME, [string]$PythonVersion = '3.13.7')
+param([string]$Jdk = $env:JAVA_HOME, [string]$PythonVersion = '3.13.7',
+  # SHA-256 of that version's embeddable zip; change it together with the version.
+  [string]$PythonSha256 = 'f6cca216a359be84797cabb54149ce5e062afb16cc7567eb7fc51cacb2d86b65')
 $ErrorActionPreference = 'Stop'
 $vendor = Join-Path $PSScriptRoot 'vendor'
 if (-not $Jdk -or -not (Test-Path (Join-Path $Jdk 'bin\jlink.exe'))) { throw 'Pass -Jdk <folder of a JDK 25> or set JAVA_HOME.' }
@@ -10,6 +12,8 @@ New-Item -ItemType Directory -Force $vendor | Out-Null
 
 $zip = Join-Path $vendor 'python.zip'
 Invoke-WebRequest "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip" -OutFile $zip
+$found = (Get-FileHash $zip -Algorithm SHA256).Hash
+if ($found -ne $PythonSha256) { Remove-Item $zip; throw "The Python download is not the expected file (SHA-256 $found)." }
 Expand-Archive $zip (Join-Path $vendor 'python'); Remove-Item $zip
 # The embeddable build ignores the script's own folder; app.py imports build.py from there.
 $pth = Get-ChildItem (Join-Path $vendor 'python') -Filter 'python*._pth' | Select-Object -First 1

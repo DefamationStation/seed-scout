@@ -29,17 +29,18 @@ jobs:
       run:
         working-directory: desktop
     steps:
-      - uses: actions/checkout@v5
+      # Actions are named by commit, so a moved tag cannot change what the release build runs.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0   # the release notes list the commits since the previous version's tag
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: 25
@@ -125,3 +126,14 @@ jobs:
           git add latest.yml
           git commit -q -m "Seed Scout $VERSION"
           git push --force "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git" update-feed
+
+      # Only the newest version and the one before it stay downloadable; older releases are removed.
+      # Their tags are kept: the release notes are written from the commits since the previous tag.
+      - name: Remove releases older than the previous one
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 200 --json tagName --jq '.[].tagName' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | head -n -2 | while read -r tag; do
+            echo "Removing release $tag"; gh release delete "$tag" --yes
+          done
