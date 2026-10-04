@@ -35,21 +35,62 @@ What comes next for Seed Scout, in the order it is planned. Items are specific t
 
 ## Next
 
-1. **Teleport you can trust.** The standing spot is computed from terrain and piece boxes, not placed blocks.
-   Check every structure type in a real world, fix the ones that land inside a block, and add a safe variant
-   (a few blocks up, with slow falling) for the types that stay uncertain.
-2. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
-   Supporting ones where it does not means moving the engine's version-specific calls behind one small layer
-   per version. This needs a second, different version installed to build and test against.
-3. **The 200-block scale.** Still the slowest view, and three attempts did not change that, so it is parked:
-   - a whole tile computed over a slice of the height range matched the game but was no faster (14.8 against
-     13.7 ms per tile);
-   - accepting open-ocean columns without the aquifer pass gained 3–5% and got about 400 sea-floor heights
-     per 800,000 wrong;
-   - more map workers help a little (about 15% from 16 to 24 on a 32-thread PC, nothing beyond), which the
-     Maximum preset now uses.
-   What would move it is fewer samples at that zoom (a coarser look) or a hand-written height calculation
-   that shares work between neighbouring columns, which the game's own classes do not allow.
+### Templates and variants
+
+1. **Shipwreck templates.** Which hull it is, whether it is beached and which chests it carries, as a filter
+   and on the card. *In progress in a separate thread.*
+2. **Village, igloo and ocean ruin detail.** Zombie villages, igloos with a basement, and single ruins against
+   clusters, shown on the feature card and on search results.
+3. **Search by template.** Filter a condition by these the way variants and portal placement work today
+   ("igloo with basement within 500 blocks"). Builds on the shipwreck template filter once that lands.
+
+### First run and empty states
+
+4. **A first-run screen** in the desktop app: the Minecraft version it found, a one-click starter search and
+   the import offer, instead of opening straight onto the form.
+5. **Engine start-up progress.** The loading screen shows one line for 10–15 seconds; show the real stages
+   (compiling, loading the game's data, ready).
+6. **Clearer errors.** An unsupported version or a missing library shows compiler text; give a plain sentence
+   and what to do about it.
+
+### Search
+
+7. **Time and odds before starting.** "About 1 in 40,000, roughly 9 minutes at this speed", from the rarity
+   the catalogue already records.
+8. **Condition presets you can save**, beside the three built-in ones.
+9. **A notification when a long search finishes**, in the desktop app.
+
+### Map
+
+10. **Biome search on the map.** "Nearest cherry grove from here", drawn as a marker with a line.
+11. **Biome and height under the pointer on overview zooms.** Height is hidden there today.
+12. **Remember the last opened seed and view** between sessions.
+13. **Marker clustering** at wide zooms, in place of overlapping dots.
+
+### Saved seeds
+
+14. **Tags and a filter**, in addition to free-text notes.
+15. **Export a seed as a card** (image or text): seed, version and key coordinates.
+
+### Housekeeping
+
+16. **Settings in one place.** PC usage is inside Search controls, the Minecraft folder in the File menu and
+    updates in Help; one settings panel for all three.
+17. **Teleport you can trust.** The standing spot is computed from terrain and piece boxes, not placed blocks.
+    Check every structure type in a real world, fix the ones that land inside a block, and add a safe variant
+    (a few blocks up, with slow falling) for the types that stay uncertain.
+18. **Versions beyond the engine's own.** The picker accepts any version the engine still compiles against.
+    Supporting ones where it does not means moving the engine's version-specific calls behind one small layer
+    per version. This needs a second, different version installed to build and test against.
+19. **The 200-block scale.** Still the slowest view, and three attempts did not change that, so it is parked:
+    - a whole tile computed over a slice of the height range matched the game but was no faster (14.8 against
+      13.7 ms per tile);
+    - accepting open-ocean columns without the aquifer pass gained 3–5% and got about 400 sea-floor heights
+      per 800,000 wrong;
+    - more map workers help a little (about 15% from 16 to 24 on a 32-thread PC, nothing beyond), which the
+      Maximum preset now uses.
+    What would move it is fewer samples at that zoom (a coarser look) or a hand-written height calculation
+    that shares work between neighbouring columns, which the game's own classes do not allow.
 
 ## Later
 
