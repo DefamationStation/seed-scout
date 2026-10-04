@@ -42,6 +42,7 @@ const ICONS = {
   bookmark: 'M6 4h12v17l-6-4.5L6 21z',
   trash: 'M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13M10 11v6M14 11v6',
   tree: 'M12 22v-7M12 15c-4 0-7-2.7-7-6.5C5 5.2 8 3 12 3s7 2.2 7 5.5c0 3.8-3 6.5-7 6.5z',
+  waves: 'M3 9c3-3 6 3 9 0s6-3 9 0M3 15c3-3 6 3 9 0s6-3 9 0',
   // Structures
   village: 'M3 11.5 12 4l9 7.5M5.5 10v10h13V10M10 20v-5.5h4V20',
   outpost: 'M6 21V4M6 5h11l-3 4 3 4H6',
@@ -74,6 +75,7 @@ const GROUPS = {
   other: { name: 'Other structures', colour: '#d6dde0' },
   nether: { name: 'Nether', colour: '#e8675a' },
   end: { name: 'The End', colour: '#d8c7f2' },
+  terrain: { name: 'Landscape', colour: '#9bd4a4' },
 };
 const STRUCTURES = {
   villages: ['Village', 'village', 'settlement'], pillager_outposts: ['Pillager outpost', 'outpost', 'settlement'],
@@ -96,7 +98,14 @@ const STRUCTURES = {
   nether_fossils: ['Nether fossil', 'urn', 'nether'], nether_ruined_portals: ['Ruined portal (Nether)', 'portal', 'nether'],
   end_cities: ['End city', 'city', 'end'],
 };
-const label = key => STRUCTURES[key]?.[0] || String(key).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+// The landscape conditions: what each is called, and what a new one asks for.
+const LAND = {
+  coverage: { name: 'Biome coverage', icon: 'grid', hint: 'How much of the area is one biome', make: () => ({ biomes: ['plains'], share: 60, mode: 'min', radius: 300 }) },
+  flat: { name: 'Flat ground', icon: 'contour', hint: 'Level land to build on', make: () => ({ share: 65, radius: 200, tolerance: 5 }) },
+  hill: { name: 'High ground', icon: 'mountain', hint: 'A hill or mountain in reach', make: () => ({ rise: 30, measure: 'above', minRadius: 150, radius: 500, across: 32 }) },
+  river: { name: 'River', icon: 'waves', hint: 'A river running close by', make: () => ({ within: 150, length: 200, width: 0, shape: 'any' }) },
+};
+const label = key => STRUCTURES[key]?.[0] || LAND[key]?.name || String(key).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks', 'abandoned_camp', 'igloos', 'ruined_portals', 'huge_ruined_portals', 'bastion_remnants', 'end_cities'];
 const PORTAL_FAMILIES = ['ruined_portals', 'huge_ruined_portals'];
 const isPortalFamily = family => PORTAL_FAMILIES.includes(family);
@@ -128,6 +137,7 @@ const familyKeys = family => [family, ...familyVariants(family), ...(isPortalFam
 const rootStructure = key => !key.includes('__') && !PORTAL_FAMILIES.some(family => key.startsWith(`${family}_`));
 function featureStyle(kind, key) {
   if (kind === 'biome') return { icon: 'tree', colour: GROUPS.biome.colour, group: 'biome' };
+  if (kind === 'terrain') return { icon: LAND[key]?.icon || 'pin', colour: GROUPS.terrain.colour, group: 'terrain' };
   const [, glyph = 'pin', group = 'other'] = STRUCTURES[key] || [];
   return { icon: glyph, colour: GROUPS[group].colour, group };
 }
@@ -214,6 +224,7 @@ $('saved-presets').onclick = e => {
   for (const f of preset.chosen) if ((f.kind === 'structure' ? catalog.sets : catalog.biomes).includes(f.key)) chosen.set(`${f.kind}:${f.key}`, condition(f.kind, f.key, f));
   for (const [k, v] of Object.entries(preset.fields || {})) if (PRESET_FIELDS.includes(k) && $(k)) $(k).value = v;
   Object.assign(spawnRules, { biomeMode: 'any', biomes: [], slimeCount: 0, slimeRadius: 5 }, preset.spawn || {}); renderSpawnRules();
+  restoreLandscape(preset.landscape);
   syncAnchor(); renderFeatures(); renderChosen(); save();
 };
 $('condition-preset-save').onclick = () => { commitConditionFields(); $('condition-preset-form').hidden = false; $('condition-preset-name').value = ''; $('condition-preset-name').focus(); };
@@ -222,10 +233,10 @@ $('condition-preset-form').onsubmit = e => {
   e.preventDefault();
   const name = $('condition-preset-name').value.trim();
   if (!name) return;
-  if (!chosen.size && !spawnRulesActive()) return toast('Choose at least one feature or spawn condition first.', true);
+  if (!chosen.size && !landscape.length && !spawnRulesActive()) return toast('Choose at least one feature or spawn condition first.', true);
   const all = conditionPresets().filter(p => p.name !== name);
   if (all.length >= 20) return toast('You can keep up to 20 presets. Delete one first.', true);
-  all.push({ name, chosen: [...chosen.values()], fields: Object.fromEntries(PRESET_FIELDS.map(k => [k, $(k).value])), spawn: { ...spawnRules, biomes: [...spawnRules.biomes] } });
+  all.push({ name, chosen: [...chosen.values()], fields: Object.fromEntries(PRESET_FIELDS.map(k => [k, $(k).value])), spawn: { ...spawnRules, biomes: [...spawnRules.biomes] }, landscape: landscape.map(c => ({ ...c, biomes: c.biomes && [...c.biomes] })) });
   localStorage.setItem('seed-scout-condition-presets', JSON.stringify(all));
   $('condition-preset-form').hidden = true; renderConditionPresets(); toast(`Preset "${name}" saved`);
 };
@@ -319,7 +330,7 @@ try { if (localStorage.getItem('seed-scout-search-mode') === 'world') searchMode
 // Conditions on the spawn itself; restored with the other settings just below.
 const spawnRules = { biomeMode: 'any', biomes: [], slimeCount: 0, slimeRadius: 5 };
 const spawnRulesActive = () => (spawnRules.biomeMode !== 'any' && spawnRules.biomes.length > 0) || spawnRules.slimeCount > 0;
-function save() { queueEstimate(); localStorage.setItem('seed-scout-settings', JSON.stringify({ defaults: 2, fields: Object.fromEntries(fields.filter(k => k !== 'seed').map(k => [k, $(k).value])), chosen: [...chosen.values()], spawn: spawnRules })); }
+function save() { queueEstimate(); localStorage.setItem('seed-scout-settings', JSON.stringify({ defaults: 2, fields: Object.fromEntries(fields.filter(k => k !== 'seed').map(k => [k, $(k).value])), chosen: [...chosen.values()], spawn: spawnRules, landscape })); }
 try {
   const saved = JSON.parse(localStorage.getItem('seed-scout-settings'));
   if (saved?.spawn) Object.assign(spawnRules, { biomeMode: ['in', 'not'].includes(saved.spawn.biomeMode) ? saved.spawn.biomeMode : 'any', biomes: Array.isArray(saved.spawn.biomes) ? saved.spawn.biomes : [], slimeCount: Number(saved.spawn.slimeCount) || 0, slimeRadius: Number(saved.spawn.slimeRadius) || 5 });
@@ -332,8 +343,96 @@ function syncAnchor() {
   $('coordinates').hidden = !custom;
   document.querySelectorAll('[data-anchor]').forEach(b => b.classList.toggle('active', b.dataset.anchor === $('anchor').value));
 }
+// ---- Landscape conditions -------------------------------------------------
+// Conditions on the shape of the land: read from terrain, checked last, and scored so results can be ranked.
+// They live beside the structure and biome conditions and any number of each can be added.
+let landscape = [];
+const LAND_LIMITS = { share: [1, 100], radius: [32, 4000], tolerance: [0, 64], rise: [-64, 320], minRadius: [0, 3968], across: [0, 2000], within: [16, 2000], length: [32, 4000], width: [0, 120] };
+const landCondition = type => ({ type, from: '', ...LAND[type].make() });
+function restoreLandscape(items) {
+  landscape = (Array.isArray(items) ? items : []).filter(c => c && LAND[c.type]).map(c => ({ ...landCondition(c.type), ...c }));
+}
+try { restoreLandscape(JSON.parse(localStorage.getItem('seed-scout-settings'))?.landscape); } catch { }
+// What a matched landscape condition measured, in a few words.
+function landFact(f) {
+  if (f.key === 'coverage') return `${(f.biomes || []).map(b => label(b)).join(' / ')} ${f.share}%`;
+  if (f.key === 'flat') return `${f.share}% level at Y ${f.level}`;
+  if (f.key === 'hill') return `${f.rise} blocks up · ${fmt(f.across)} across · ${fmt(f.distance)} away`;
+  return `${fmt(f.length)} long · ${f.width} wide · ${f.shape} · ${fmt(f.distance)} away`;
+}
+// The same condition as it was asked for (the rare-find catalogue and the seed card describe a search with it).
+function landWish(c) {
+  if (c.type === 'coverage') return `${c.mode === 'max' ? 'at most' : 'at least'} ${c.share}% ${c.biomes.map(b => label(b).toLowerCase()).join(' or ')} within ${fmt(c.radius)}`;
+  if (c.type === 'flat') return `${c.share}% level ground within ${fmt(c.radius)}`;
+  if (c.type === 'hill') return `ground ${c.measure === 'y' ? `at Y ${c.rise}` : `${c.rise} blocks up`} ${fmt(c.minRadius)}–${fmt(c.radius)} away`;
+  return `${c.shape === 'very' ? 'a very straight' : c.shape === 'fairly' ? 'a fairly straight' : 'a'} river within ${fmt(c.within)}, ${fmt(c.length)} long`;
+}
+const landScore = result => result.features.reduce((sum, f) => sum + (f.kind === 'terrain' ? f.score || 0 : 0), 0);
+function landRows() {
+  // Anything wanted nearby in the Overworld can be the place a landscape condition is read around.
+  const anchors = [...chosen.values()].filter(f => f.mode !== 'exclude' && !realmOf(f));
+  for (const c of landscape) if (c.from && !anchors.some(f => f.key === c.from)) c.from = '';
+  return landscape.map((c, i) => {
+    const num = (param, name) => `<input type="number" data-land="${i}" data-param="${param}" value="${c[param]}" min="${LAND_LIMITS[param][0]}" max="${LAND_LIMITS[param][1]}" aria-label="${name}">`;
+    const pick = (param, name, options) => `<select data-land="${i}" data-param="${param}" aria-label="${name}">${options.map(([value, text]) => `<option value="${value}" ${c[param] === value ? 'selected' : ''}>${text}</option>`).join('')}</select>`;
+    const around = anchors.length ? `<span class="origin"><span>around</span>${pick('from', 'Where it is measured', [['', 'the search origin'], ...anchors.map(f => [esc(f.key), `the ${esc(label(f.key).toLowerCase())}`])])}</span>` : '';
+    const rule = c.type === 'coverage'
+      ? `${pick('mode', 'At least or at most', [['min', 'At least'], ['max', 'At most']])}${num('share', 'Share of the area')}<span>% of the land within</span>${num('radius', 'Distance')}<span>blocks is</span>${around}
+        <div class="criterion-or">${c.biomes.map(b => `<span class="chip">${glyph('biome', b)}${esc(label(b))}<button data-land-biome-remove="${esc(b)}" data-land="${i}" aria-label="Remove ${esc(label(b))}">×</button></span>`).join('<span>or</span>')}
+          <select data-land-biome="${i}" aria-label="Add a biome"><option value="">${c.biomes.length ? '+ or…' : 'Choose a biome…'}</option>${(catalog?.biomes || []).filter(b => !c.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}</select></div>`
+      : c.type === 'flat'
+        ? `${num('share', 'Share of level ground')}<span>% of the ground within</span>${num('radius', 'Distance')}<span>blocks is level, give or take</span>${num('tolerance', 'Height allowance')}<span>blocks</span>${around}`
+        : c.type === 'hill'
+          ? `<span>Ground</span>${num('rise', 'Height')}${pick('measure', 'How the height is measured', [['above', 'blocks higher than the start'], ['y', 'or higher, as a Y level']])}<span>,</span>${num('minRadius', 'Nearest distance')}<span>to</span>${num('radius', 'Furthest distance')}<span>blocks away, at least</span>${num('across', 'Width of the high ground')}<span>across</span>${around}`
+          : `<span>Within</span>${num('within', 'Distance to the river')}<span>blocks, at least</span>${num('length', 'River length')}<span>long and</span>${num('width', 'River width')}<span>wide,</span>${pick('shape', 'River shape', [['any', 'any shape'], ['fairly', 'fairly straight'], ['very', 'very straight']])}${around}`;
+    return `<div class="criterion land">
+      <div class="criterion-top">${glyph('terrain', c.type)}<span class="name">${LAND[c.type].name}</span><button class="icon-btn" data-land-remove="${i}" aria-label="Remove ${LAND[c.type].name}">${icon('x')}</button></div>
+      <div class="criterion-rule">${rule}</div>
+    </div>`;
+  }).join('');
+}
+// Read what is typed before a request or a rebuild, even if the field has not lost focus yet.
+function commitLandscape() {
+  for (const el of $('chosen').querySelectorAll?.('[data-land][data-param]') || []) {
+    const c = landscape[Number(el.dataset.land)], param = el.dataset.param; if (!c) continue;
+    if (!LAND_LIMITS[param]) { c[param] = el.value; continue; }
+    const [low, high] = LAND_LIMITS[param];
+    c[param] = Math.max(low, Math.min(high, Math.round(Number(el.value) || 0)));
+  }
+  for (const c of landscape) if (c.type === 'hill') c.minRadius = Math.min(c.minRadius, Math.max(0, c.radius - 32));
+}
+function addLandscape(type) {
+  if (landscape.length >= 12) return toast('Use up to 12 landscape conditions.', true);
+  commitConditionFields(); landscape.push(landCondition(type)); renderFeatures(); renderChosen(); save();
+  $('chosen').querySelector?.('.criterion.land:last-of-type')?.scrollIntoView({ block: 'nearest' });
+}
+// Changes and clicks inside the landscape rows; true when the event was one of theirs.
+function landscapeChanged(e) {
+  const biome = e.target.closest('[data-land-biome]'), field = e.target.closest('[data-land][data-param]');
+  if (!biome && !field) return false;
+  commitConditionFields();
+  if (biome && biome.value) landscape[Number(biome.dataset.landBiome)].biomes.push(biome.value);
+  // Only a choice from a list changes what the row shows; a typed number stays as it is.
+  if (biome || field.tagName === 'SELECT') renderChosen();
+  save(); return true;
+}
+function landscapeClicked(e) {
+  const remove = e.target.closest('[data-land-remove]'), biome = e.target.closest('[data-land-biome-remove]');
+  if (!remove && !biome) return false;
+  commitConditionFields();
+  if (remove) landscape.splice(Number(remove.dataset.landRemove), 1);
+  else { const c = landscape[Number(biome.dataset.land)]; c.biomes = c.biomes.filter(b => b !== biome.dataset.landBiomeRemove); }
+  renderFeatures(); renderChosen(); save(); return true;
+}
 function renderFeatures() {
   if (!catalog) return;
+  $('filter-field').hidden = kind === 'terrain';
+  if (kind === 'terrain') {
+    $('features').innerHTML = Object.entries(LAND).map(([type, land]) => { const count = landscape.filter(c => c.type === type).length;
+      return `<button type="button" class="feature land-add ${count ? 'selected' : ''}" data-land-add="${type}">${glyph('terrain', type)}<span class="name">${land.name}<small>${count ? `${count} added · add another` : land.hint}</small></span>${icon('plus', 'tick')}</button>`; }).join('');
+    $('kind-hint').textContent = 'Read from the terrain itself and checked last, so they suit a search that already asks for something else. Sort the results by best landscape fit to rank them.';
+    return;
+  }
   const filter = $('filter').value.trim().toLowerCase();
   const list = [...(kind === 'structure' ? catalog.sets.filter(rootStructure) : catalog.biomes)].filter(k => label(k).toLowerCase().includes(filter) || (kind === 'structure' && familyKeys(k).some(v => label(v).toLowerCase().includes(filter)))).sort((a, b) => label(a).localeCompare(label(b)));
   const realm = k => (kind === 'structure' && catalog.dimensions?.[k]) || '', order = ['', 'nether', 'end'];
@@ -354,7 +453,7 @@ function renderChosen() {
   for (const f of chosen.values()) if (f.near && !canAnchor(chosen.get(f.near))) f.near = '';
   // Alternatives only make sense for a plain "near the origin" condition that nothing else is measured from.
   for (const [id, f] of chosen) if (f.or && (f.mode === 'exclude' || f.near || isAnchor(id))) delete f.or;
-  $('selection-count').textContent = `${chosen.size} selected`;
+  $('selection-count').textContent = `${chosen.size + landscape.length} selected`;
   const number = (id, field, value, min, max, name) => `<input type="number" data-field="${field}" data-id="${esc(id)}" value="${value}" min="${min}" max="${max}" step="${field === 'count' ? 1 : 50}" aria-label="${name}">`;
   $('chosen').innerHTML = [...chosen.entries()].map(([id, f]) => {
     const avoid = f.mode === 'exclude', name = esc(conditionName(f)), anchors = isAnchor(id) ? [] : anchorsFor(id);
@@ -373,15 +472,15 @@ function renderChosen() {
         <button class="icon-btn" data-remove="${esc(id)}" aria-label="Remove ${name}">${icon('x')}</button></div>
       <div class="criterion-rule">${rule}</div>${either}
     </div>`;
-  }).join('') || '<p class="hint">Nothing selected yet. Tick a structure or biome above.</p>';
+  }).join('') + landRows() || '<p class="hint">Nothing selected yet. Tick a structure or biome above.</p>';
   renderNearbyBiomes();
   syncButtons();
 }
 function syncButtons() {
   const emptyFilter = [...chosen.values()].some(f => SUBCATEGORY_FILTERS.some(field => f[field]?.length === 0));
-  $('start').disabled = !catalog || state.running || state.world?.running || (searchMode === 'world' ? ![...chosen.values()].some(f => f.mode !== 'exclude') : (!chosen.size && !spawnRulesActive())) || emptyFilter;
+  $('start').disabled = !catalog || state.running || state.world?.running || (searchMode === 'world' ? ![...chosen.values()].some(f => f.mode !== 'exclude') : (!chosen.size && !landscape.length && !spawnRulesActive())) || emptyFilter || landscape.some(c => c.type === 'coverage' && !c.biomes.length);
   worldHint();
-  $('inspect').disabled = !catalog || (!chosen.size && !spawnRulesActive()) || emptyFilter;
+  $('inspect').disabled = !catalog || (!chosen.size && !landscape.length && !spawnRulesActive()) || emptyFilter;
 }
 function updateConditionField(el) {
   const f = chosen.get(el.dataset.id); if (!f) return;
@@ -396,6 +495,7 @@ function commitConditionFields() {
   // Apply the new maximum first, so the minimum is clamped against the visible range.
   inputs.sort((a, b) => Number(a.dataset.field === 'minRadius') - Number(b.dataset.field === 'minRadius'));
   for (const el of inputs) updateConditionField(el);
+  commitLandscape();
 }
 // ---- Conditions on the spawn itself ---------------------------------------
 // The biome the world spawn is in, and slime chunks around the search origin. Both are tested before any feature.
@@ -432,7 +532,8 @@ const request = () => {
   commitConditionFields();
   return { ...Object.fromEntries(fields.map(k => [k, $(k).value])), features: [...chosen.entries()].map(([id, f]) => ({ ...f, id, near: f.near || undefined })),
     ...(spawnRules.biomeMode !== 'any' && spawnRules.biomes.length ? { spawnBiomes: spawnRules.biomes, spawnBiomeMode: spawnRules.biomeMode } : {}),
-    ...(spawnRules.slimeCount > 0 ? { slime: { count: spawnRules.slimeCount, radius: spawnRules.slimeRadius } } : {}) };
+    ...(spawnRules.slimeCount > 0 ? { slime: { count: spawnRules.slimeCount, radius: spawnRules.slimeRadius } } : {}),
+    ...(landscape.length ? { landscape: landscape.map(c => ({ ...c })) } : {}) };
 };
 
 $('features').onchange = e => {
@@ -443,6 +544,8 @@ $('features').onchange = e => {
   renderChosen(); save();
 };
 $('features').onclick = e => {
+  const land = e.target.closest('[data-land-add]');
+  if (land) return addLandscape(land.dataset.landAdd);
   const arrow = e.target.closest('[data-subcategories]');
   if (arrow) { openSubcategories(arrow.dataset.subcategories, 'find'); return; }
   const button = e.target.closest('[data-category]'); if (!button) return;
@@ -536,6 +639,7 @@ $('subcategory-remove').onclick = () => { chosen.delete(`structure:${subcategory
 for (const id of ['subcategory-close', 'subcategory-done']) $(id).onclick = () => $('subcategory-dialog').close();
 $('subcategory-dialog').onclick = e => { if (e.target === e.currentTarget) { const box = e.currentTarget.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) e.currentTarget.close(); } };
 $('chosen').onchange = e => {
+  if (landscapeChanged(e)) return;
   const near = e.target.closest('[data-near]');
   if (near) { chosen.get(near.dataset.id).near = near.value; renderChosen(); save(); return; }
   const or = e.target.closest('[data-or-add]');
@@ -548,6 +652,7 @@ $('chosen').onchange = e => {
   renderChosen(); save();
 };
 $('chosen').onclick = e => {
+  if (landscapeClicked(e)) return;
   const alternative = e.target.closest('[data-or-remove]');
   if (alternative) { const f = chosen.get(alternative.dataset.id); f.or.splice(Number(alternative.dataset.orRemove), 1); if (!f.or.length) delete f.or; renderChosen(); save(); return; }
   const remove = e.target.closest('[data-remove]'), mode = e.target.closest('[data-mode]');
@@ -698,7 +803,7 @@ $('inspect').onclick = async () => {
 // Chip text for a matched feature: distance from the origin, or from the match it was measured from.
 // What a built structure turned out to be, beyond its type: read from its pieces by the engine.
 const builtFact = f => f.bastion ? `${TRAITS[f.bastion] || 'Unknown'} bastion` : f.ship ? 'With ship' : f.zombie ? 'Abandoned (zombie)' : f.basement === true ? 'With basement' : f.basement === false ? 'No basement' : f.ruins > 1 ? `Cluster of ${f.ruins}` : f.ruins === 1 ? 'Single ruin' : '';
-const featureChip = f => `${glyph(f.kind, f.key)}${esc(label(f.key))}${f.zombie || f.basement || f.ruins > 1 || f.bastion || f.ship ? `<i>${esc(builtFact(f).toLowerCase())}</i>` : ''}<b>${fmt(f.distance)}</b>${f.near ? `from ${esc(label(f.near.key).toLowerCase())}` : f.dimension === 'nether' ? 'Nether blocks' : f.dimension === 'end' ? 'from the End’s centre' : 'blocks'}`;
+const featureChip = f => f.kind === 'terrain' ? `${glyph('terrain', f.key)}${esc(LAND[f.key]?.name || f.key)}<b>${esc(landFact(f))}</b>${f.from ? `at the ${esc(label(f.from).toLowerCase())}` : ''}` : `${glyph(f.kind, f.key)}${esc(label(f.key))}${f.zombie || f.basement || f.ruins > 1 || f.bastion || f.ship ? `<i>${esc(builtFact(f).toLowerCase())}</i>` : ''}<b>${fmt(f.distance)}</b>${f.near ? `from ${esc(label(f.near.key).toLowerCase())}` : f.dimension === 'nether' ? 'Nether blocks' : f.dimension === 'end' ? 'from the End’s centre' : 'blocks'}`;
 // The End is not on the map: its chip gives the place as a teleport command instead.
 async function copyEndPlace(seed, f) {
   try {
@@ -731,15 +836,17 @@ const nearest = (result, key) => Math.min(Infinity, ...result.features.filter(f 
 function renderResults() {
   let results = allResults();
   // Results arrive closest overall first; with several conditions they can also be ordered by one of them.
-  const keys = [...new Set(results.flatMap(r => r.features.map(f => f.key)))], sort = $('results-sort');
+  // Landscape conditions that cover an area have no distance to sort by; they are ranked by how well they fit.
+  const ranked = results.some(r => r.features.some(f => f.kind === 'terrain'));
+  const keys = [...new Set(results.flatMap(r => r.features.filter(f => !f.area).map(f => f.key))), ...(ranked ? ['~land'] : [])], sort = $('results-sort');
   if (sort.dataset.keys !== keys.join()) {
     const chosen = sort.value;
     sort.dataset.keys = keys.join();
-    sort.innerHTML = `<option value="">Closest overall</option>${keys.map(k => `<option value="${esc(k)}">Nearest ${esc(label(k).toLowerCase())}</option>`).join('')}`;
+    sort.innerHTML = `<option value="">Closest overall</option>${keys.map(k => k === '~land' ? '<option value="~land">Best landscape fit</option>' : `<option value="${esc(k)}">Nearest ${esc(label(k).toLowerCase())}</option>`).join('')}`;
     sort.value = keys.includes(chosen) ? chosen : '';
   }
-  $('results-sort-row').hidden = results.length < 2 || keys.length < 2;
-  if (sort.value && !$('results-sort-row').hidden) results = [...results].sort((a, b) => nearest(a, sort.value) - nearest(b, sort.value));
+  $('results-sort-row').hidden = results.length < 2 || (keys.length < 2 && !ranked);
+  if (sort.value && !$('results-sort-row').hidden) results = [...results].sort((a, b) => sort.value === '~land' ? landScore(b) - landScore(a) : nearest(a, sort.value) - nearest(b, sort.value));
   if (results.length && !results.some(r => r.seed === selectedSeed)) { selectedSeed = results[0].seed; worldMap.show(results[0]); }
   if (!results.length) { worldMap.clear(); selectedSeed = null; }
   const badge = $('results-badge'); badge.hidden = !results.length; badge.textContent = results.length;
@@ -808,7 +915,7 @@ function seedCard(entry) {
   const r = entry.result, version = r?.version || catalog?.version || '';
   return [`Minecraft seed ${entry.seed}${version ? ` · ${versionName(version)}` : ''}`,
     r ? `Spawn: X ${r.spawnX}, Z ${r.spawnZ}` : '',
-    ...(r?.features || []).map(f => `${label(f.key)}${builtFact(f) ? ` (${builtFact(f).toLowerCase()})` : ''}: ${f.dimension ? `${REALMS[f.dimension]} ` : ''}X ${f.x}, Y ${f.y}, Z ${f.z} · ${fmt(f.distance)} blocks from ${f.near ? `the ${label(f.near.key).toLowerCase()}` : 'the origin'}`),
+    ...(r?.features || []).map(f => f.kind === 'terrain' ? `${label(f.key)}: ${landFact(f)}` : `${label(f.key)}${builtFact(f) ? ` (${builtFact(f).toLowerCase()})` : ''}: ${f.dimension ? `${REALMS[f.dimension]} ` : ''}X ${f.x}, Y ${f.y}, Z ${f.z} · ${fmt(f.distance)} blocks from ${f.near ? `the ${label(f.near.key).toLowerCase()}` : 'the origin'}`),
     entry.view ? `Saved view: X ${Math.round(entry.view.x)}, Z ${Math.round(entry.view.z)}` : '',
     entry.tags?.length ? `Tags: ${entry.tags.join(', ')}` : '',
     entry.note?.trim() ? `Notes: ${entry.note.trim()}` : '',
@@ -909,7 +1016,7 @@ function renderCatalogue() {
     const c = f.conditions, origin = c.anchor === 'custom' ? `around X ${c.x}, Z ${c.z}` : 'around spawn';
     return `<article class="result rare" data-find="${f.id}">
       <div class="result-top"><strong>${f.seedsPerMatch ? `About 1 in ${fmt(f.seedsPerMatch)}` : 'Rarity unknown'}</strong><span class="card-actions"><button class="icon-btn" data-forget-find title="Remove from the catalogue" aria-label="Remove from the catalogue">${icon('trash')}</button><button class="btn small" data-reuse title="Load these conditions into Find">Use conditions</button></span></div>
-      <p class="rare-text">${esc(c.features.map(x => describe(x, c.features)).join(' · '))}, ${origin}</p>
+      <p class="rare-text">${esc([...c.features.map(x => describe(x, c.features)), ...(c.landscape || []).map(landWish)].join(' · '))}, ${origin}</p>
       <div class="result-meta"><span>${fmt(f.seeds.length)} seed${f.seeds.length === 1 ? '' : 's'} · ${fmt(f.tested)} checked${f.matches < 5 ? ' · rough estimate' : ''} · ${esc(f.version)}${f.imported ? ' · includes imported counts' : ''}</span></div>
       <details><summary>Show seeds</summary>${f.seeds.map((r, i) => `<div class="rare-seed"><code>${esc(r.seed)}</code><span class="card-actions"><button class="icon-btn ${savedEntry(r.seed) ? 'active' : ''}" data-keep="${i}" title="Save this seed with notes" aria-label="Save seed ${esc(r.seed)}">${icon('bookmark')}</button><button class="icon-btn" data-copy="${esc(r.seed)}" title="Copy seed" aria-label="Copy seed">${icon('copy')}</button><button class="btn small primary" data-show="${i}">Open</button></span></div>`).join('')}</details>
     </article>`;
@@ -929,6 +1036,7 @@ $('rare-list').onclick = async e => {
     const c = find.conditions;
     chosen.clear();
     for (const f of c.features) chosen.set(f.id || `${f.kind}:${f.key}`, condition(f.kind, f.key, { ...f, near: f.near || '' }));
+    restoreLandscape(c.landscape);
     $('anchor').value = c.anchor; $('x').value = c.x || 0; $('z').value = c.z || 0; $('biomeMode').value = c.biomeMode; $('cluster').value = c.cluster;
     syncAnchor(); renderChosen(); renderFeatures(); save(); openPanel('find', true); toast('Conditions loaded'); return;
   }

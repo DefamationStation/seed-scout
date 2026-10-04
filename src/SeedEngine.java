@@ -457,6 +457,12 @@ public final class SeedEngine {
         var structState=ChunkGeneratorStructureState.createForNormal(state,seed,origin,generator.getBiomeSource(),access.lookupOrThrow(Registries.STRUCTURE_SET));
         var found=around(seed,state,structState,parsed,x,z,request,job);
         if(found==null)return null;
+        // The shape of the land costs the most to read, so it is looked at only where everything else holds.
+        if(request.has("landscape")) {
+            var land=Landscape.check(request.getAsJsonArray("landscape"),state,x,z,found,()->job==null||job.running.get());
+            if(land==null)return null;
+            found=new ArrayList<>(found);found.addAll(land);
+        }
         var result=new LinkedHashMap<String,Object>();result.put("seed",Long.toString(seed));
         // Distances are measured from the middle of the spawn chunk, which costs nothing to know; the spawn point
         // itself needs terrain, so it is worked out only for the seeds that are reported.
@@ -876,6 +882,11 @@ public final class SeedEngine {
                 if(exact!=null&&findStructures(exact,seed,state,structState,x,z,null,scratch,1,false,null)<1)continue;
                 var found=around(seed,state,structState,others,x,z,request,null);
                 if(found==null)continue;
+                if(request.has("landscape")) {
+                    var land=Landscape.check(request.getAsJsonArray("landscape"),state,x,z,found,running::get);
+                    if(land==null)continue;
+                    found=new ArrayList<>(found);found.addAll(land);
+                }
                 var features=new ArrayList<Map<String,Object>>();
                 if(group) {
                     // The group came back from the conditions, the anchor among its members. Each member finds the same

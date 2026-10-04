@@ -628,7 +628,7 @@ const worldMap = (() => {
           ${(built?.shipwreckTemplate || marker?.shipwreckTemplate) ? fact('Ship template', esc(shipTemplateName(built?.shipwreckTemplate || marker.shipwreckTemplate))) : ''}
           ${(built?.placement || marker?.placement) ? fact('Placement', esc(placementName(marker?.key || built?.key, built?.placement || marker.placement))) : ''}
           ${built?.shipDeckY !== undefined ? fact('Ship / water', `Deck Y ${built.shipDeckY} · water Y ${built.waterY} <small>Keel Y ${built.shipKeelY} · ${built.groundedHullColumns} hull columns touch ground</small>`) : ''}
-          ${shape ? fact('Structure', `Y ${shape.minY} to ${shape.maxY} <small>${shape.maxX - shape.minX + 1} × ${shape.maxZ - shape.minZ + 1} blocks · ${built.pieces} piece${built.pieces === 1 ? '' : 's'}</small>`) : marker ? fact(marker.kind === 'biome' ? 'Sampled at' : 'Structure Y', `Y ${marker.y}`) : ''}
+          ${shape ? fact('Structure', `Y ${shape.minY} to ${shape.maxY} <small>${shape.maxX - shape.minX + 1} × ${shape.maxZ - shape.minZ + 1} blocks · ${built.pieces} piece${built.pieces === 1 ? '' : 's'}</small>`) : marker ? fact(marker.kind === 'biome' ? 'Sampled at' : marker.kind === 'terrain' ? 'Measured at' : 'Structure Y', `Y ${marker.y}`) : ''}
           ${realm ? '' : fact('Nether', `X ${Math.floor(p.x / 8)} · Z ${Math.floor(p.z / 8)}`)}
           ${realm ? '' : fact('Slime chunk', p.slimeChunk ? '<span class="yes">Yes</span>' : 'No')}
         </dl>
@@ -750,7 +750,7 @@ const worldMap = (() => {
     result = value;
     // A Nether match is drawn where its portal comes out in the Overworld, eight times its own coordinates, and keeps
     // those in `at`. The End has no place on this map.
-    matchMarkers = value.features.filter(f => f.dimension !== 'end').map(f => ({ ...f, ...(f.dimension === 'nether' ? { at: { x: f.x, z: f.z }, x: f.x * 8, z: f.z * 8 } : {}), id: markerId(f), source: 'match', rank: -2 }));
+    matchMarkers = value.features.filter(f => f.dimension !== 'end' && !f.area).map(f => ({ ...f, ...(f.dimension === 'nether' ? { at: { x: f.x, z: f.z }, x: f.x * 8, z: f.z * 8 } : {}), id: markerId(f), source: 'match', rank: -2 }));
     if (fresh) { selection = null; hover = null; clickToken++; statsKey = ''; $('inspector').hidden = true; if (measure) setMeasure(false); centre = { x: value.anchorX, z: value.anchorZ }; bpp = HOME_BPP; }
     setChrome(true); $('chip-seed').textContent = value.seed;
     markersDirty = true; invalidate();

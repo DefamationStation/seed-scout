@@ -10,7 +10,9 @@ let inputs = ['count','minRadius','radius'].map(field=>({dataset:{id,field},valu
 const context = {chosen,fields:['radius'],$:key=>key==='chosen'?{querySelectorAll:()=>inputs}:{value:'1000'},
   mergeFamilyConditions:()=>{},renderFeatures:()=>{},renderChosen:()=>{},save:()=>{},familyName:x=>x,isPortalFamily:()=>true,
   // The request also carries the spawn conditions, which live outside the slice of app.js run here.
-  spawnRules:{biomeMode:'any',biomes:[],slimeCount:0,slimeRadius:5}};
+  spawnRules:{biomeMode:'any',biomes:[],slimeCount:0,slimeRadius:5},
+  // So do the landscape conditions; none are set here.
+  landscape:[],commitLandscape:()=>{}};
 const core = app.slice(app.indexOf('function updateConditionField('),app.indexOf("$('features').onchange"));
 vm.runInNewContext(core+'\nglobalThis.buildRequest=request;',context);
 let request = context.buildRequest();

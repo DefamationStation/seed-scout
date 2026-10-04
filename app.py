@@ -22,7 +22,7 @@ def conditions(request):
     if request['anchor']=='custom': keep.update(x=request['x'],z=request['z'])
     keep['features']=sorted(({k:f[k] for k in ('kind','key','radius','mode','minRadius','count','id','near','variants','placements','templates','or') if k in f} for f in request['features']),key=lambda f:json.dumps(f,sort_keys=True))
     # Spawn conditions only appear when set, so searches without them keep the signature they always had.
-    keep.update({k:request[k] for k in ('spawnBiomes','spawnBiomeMode','slime') if k in request})
+    keep.update({k:request[k] for k in ('spawnBiomes','spawnBiomeMode','slime','landscape') if k in request})
     return keep
 def closeness(result): return sum(f['distance'] for f in result['features'])
 
@@ -319,11 +319,45 @@ class Engine:
             values=sorted(set(values))
             if set(values)==set(allowed): f.pop(field,None)
             else: f[field]=values
+    def validate_landscape(self,request):
+        """Conditions on the shape of the land: biome coverage, flat ground, high ground and a river."""
+        items=request.get('landscape')
+        if not items: request.pop('landscape',None); return
+        if not isinstance(items,list) or len(items)>12: raise ValueError('Use up to 12 landscape conditions.')
+        # A condition can be measured from the reported match of an Overworld structure or biome that is wanted nearby.
+        anchors={f['key'] for f in request.get('features',[]) if f.get('mode','within')=='within' and not (f['kind']=='structure' and f['key'] in self.catalog.get('dimensions',{}))}
+        def number(item,key,low,high,what):
+            try: value=int(item.get(key))
+            except (TypeError,ValueError): raise ValueError(f'{what} needs a number.') from None
+            if not low<=value<=high: raise ValueError(f'{what} must be {low:,}–{high:,}.')
+            return value
+        cleaned=[]
+        for index,item in enumerate(items):
+            if not isinstance(item,dict): raise ValueError('Invalid landscape condition.')
+            kind=item.get('type')
+            if kind=='coverage':
+                biomes=item.get('biomes')
+                if not isinstance(biomes,list) or not biomes or any(b not in self.catalog['biomes'] for b in biomes): raise ValueError('Biome coverage needs at least one biome.')
+                out={'biomes':sorted(set(biomes)),'share':number(item,'share',1,100,'The share of the area'),'mode':'max' if item.get('mode')=='max' else 'min','radius':number(item,'radius',32,4000,'The coverage distance')}
+            elif kind=='flat':
+                out={'share':number(item,'share',1,100,'The share of level ground'),'radius':number(item,'radius',32,4000,'The flat-ground distance'),'tolerance':number(item,'tolerance',0,64,'The height allowance')}
+            elif kind=='hill':
+                out={'rise':number(item,'rise',-64,320,'The height'),'measure':'y' if item.get('measure')=='y' else 'above','radius':number(item,'radius',64,4000,'The furthest distance to high ground'),
+                     'minRadius':number(item,'minRadius',0,4000,'The nearest distance to high ground'),'across':number(item,'across',0,2000,'The width of the high ground')}
+                if out['minRadius']>out['radius']-32: raise ValueError('High ground needs its nearest distance at least 32 blocks below its furthest.')
+            elif kind=='river':
+                out={'within':number(item,'within',16,2000,'The distance to the river'),'length':number(item,'length',32,4000,'The river length'),'width':number(item,'width',0,120,'The river width'),
+                     'shape':item.get('shape') if item.get('shape') in ('fairly','very') else 'any'}
+            else: raise ValueError('Unknown landscape condition.')
+            source=item.get('from') or ''
+            if source and source not in anchors: raise ValueError('A landscape condition can only be measured from a structure or biome you want nearby.')
+            cleaned.append({'type':kind,**out,**({'from':source} if source else {}),'index':index})
+        request['landscape']=cleaned
     def validate(self,request):
         if self.catalog is None: raise ValueError('Snapshot engine is still starting.')
         features=request.get('features',[])
         if len(features)>12: raise ValueError('Select up to 12 features.')
-        if not features and not request.get('spawnBiomes') and not (isinstance(request.get('slime'),dict) and int(request['slime'].get('count') or 0)>0): raise ValueError('Select 1–12 features, or a spawn condition.')
+        if not features and not request.get('landscape') and not request.get('spawnBiomes') and not (isinstance(request.get('slime'),dict) and int(request['slime'].get('count') or 0)>0): raise ValueError('Select 1–12 features, a landscape condition or a spawn condition.')
         for f in features:
             if f.get('kind') not in ('structure','biome'): raise ValueError('Invalid feature type.')
             choices=self.catalog['sets' if f['kind']=='structure' else 'biomes']
@@ -364,6 +398,7 @@ class Engine:
                 if item!={'kind':f['kind'],'key':f['key']} and item not in cleaned: cleaned.append(item)
             if cleaned: f['or']=cleaned
             else: f.pop('or',None)
+        self.validate_landscape(request)
         biomes=request.get('spawnBiomes')
         if biomes:
             if not isinstance(biomes,list) or len(biomes)>30 or any(b not in self.catalog['biomes'] for b in biomes): raise ValueError('Invalid spawn biomes.')
