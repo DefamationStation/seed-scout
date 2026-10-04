@@ -77,6 +77,9 @@
             <div class="chips" id="spawn-biome-list"></div>
             <select id="spawn-biome-add" aria-label="Add a spawn biome"></select>
           </div>
+          <label class="field"><span>Biomes nearby</span><select id="nearby-biome-add" aria-label="Add a biome that must be near the spawn"></select></label>
+          <div class="chips" id="nearby-biome-list"></div>
+          <p class="hint" id="nearby-biome-hint" hidden>Each has its own distance under Conditions, further down.</p>
           <div class="criterion-rule slime-rule"><span>At least</span><input id="slime-count" type="number" min="0" max="289" value="0" aria-label="Slime chunks wanted"><span>slime chunks within</span><input id="slime-radius" type="number" min="1" max="8" value="5" aria-label="Chunks from the origin"><span>chunks <i>0 = off</i></span></div>
         </div>
         <label class="field inline"><span>Default distance</span><span class="with-unit"><input id="radius" type="number" min="32" max="8000" step="100" value="1000"><i>blocks</i></span></label>

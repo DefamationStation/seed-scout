@@ -374,6 +374,7 @@ function renderChosen() {
       <div class="criterion-rule">${rule}</div>${either}
     </div>`;
   }).join('') || '<p class="hint">Nothing selected yet. Tick a structure or biome above.</p>';
+  renderNearbyBiomes();
   syncButtons();
 }
 function syncButtons() {
@@ -402,9 +403,23 @@ function renderSpawnRules() {
   $('spawn-biome-mode').value = spawnRules.biomeMode;
   $('spawn-biome-pick').hidden = spawnRules.biomeMode === 'any';
   $('spawn-biome-list').innerHTML = spawnRules.biomes.map(b => `<span class="chip">${glyph('biome', b)}${esc(label(b))}<button data-spawn-biome="${esc(b)}" aria-label="Remove ${esc(label(b))}">×</button></span>`).join('');
-  $('spawn-biome-add').innerHTML = `<option value="">Add a biome…</option>${(catalog?.biomes || []).filter(b => !spawnRules.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}`;
+  $('spawn-biome-add').innerHTML = `<option value="">Add a spawn biome…</option>${(catalog?.biomes || []).filter(b => !spawnRules.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}`;
   $('slime-count').value = spawnRules.slimeCount; $('slime-radius').value = spawnRules.slimeRadius;
 }
+// Biomes wanted near the spawn are ordinary biome conditions; this is a second way in, beside the spawn biome,
+// because that is where one looks for it. The distances are set on the condition itself.
+function renderNearbyBiomes() {
+  const near = [...chosen.values()].filter(f => f.kind === 'biome' && f.mode !== 'exclude' && !f.near);
+  $('nearby-biome-list').innerHTML = near.map(f => `<span class="chip">${glyph('biome', f.key)}${esc(label(f.key))}<button data-nearby-biome="${esc(f.key)}" aria-label="Remove ${esc(label(f.key))}">×</button></span>`).join('');
+  $('nearby-biome-hint').hidden = !near.length;
+  $('nearby-biome-add').innerHTML = `<option value="">Add a biome to have nearby…</option>${(catalog?.biomes || []).filter(b => !chosen.has(`biome:${b}`)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}`;
+}
+$('nearby-biome-add').onchange = () => {
+  const b = $('nearby-biome-add').value; if (!b) return;
+  if (chosen.size >= 12) { toast('Choose up to 12 search conditions.', true); return renderNearbyBiomes(); }
+  commitConditionFields(); chosen.set(`biome:${b}`, condition('biome', b)); renderFeatures(); renderChosen(); save();
+};
+$('nearby-biome-list').onclick = e => { const b = e.target.closest('[data-nearby-biome]'); if (!b) return; commitConditionFields(); chosen.delete(`biome:${b.dataset.nearbyBiome}`); renderFeatures(); renderChosen(); save(); };
 $('spawn-biome-mode').onchange = () => { spawnRules.biomeMode = $('spawn-biome-mode').value; renderSpawnRules(); syncButtons(); save(); };
 $('spawn-biome-add').onchange = () => { const b = $('spawn-biome-add').value; if (b && spawnRules.biomes.length < 30) spawnRules.biomes.push(b); renderSpawnRules(); syncButtons(); save(); };
 $('spawn-biome-list').onclick = e => { const b = e.target.closest('[data-spawn-biome]'); if (!b) return; spawnRules.biomes = spawnRules.biomes.filter(x => x !== b.dataset.spawnBiome); renderSpawnRules(); syncButtons(); save(); };
