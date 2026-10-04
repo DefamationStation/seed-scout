@@ -1,7 +1,7 @@
 """Local-only browser UI and a persistent snapshot generation engine."""
 import argparse, atexit, contextlib, copy, gzip, json, os, pathlib, secrets, sqlite3, subprocess, threading, time, webbrowser, urllib.request
 from urllib.parse import urlsplit, parse_qs
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from build import ROOT, prepare
@@ -227,7 +227,7 @@ class Engine:
                 variants=self.catalog.get('structureVariants',{}).get(f['key'],[]) if f['kind']=='structure' else []
                 allowed=([self.catalog['variantDetails'][k] for k in variants] if field=='variants' else
                          [p for p in ('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground')
-                          if f['key']=='ruined_portals' and 'ruined_portals_'+p in self.catalog['sets']])
+                          if f['key'] in ('ruined_portals','huge_ruined_portals') and f['key']+'_'+p in self.catalog['sets']])
                 if not isinstance(values,list) or not values or any(not isinstance(v,str) or v not in allowed for v in values):
                     raise ValueError(f'Invalid {field} for this structure family.')
                 values=sorted(set(values))
@@ -314,10 +314,14 @@ class Engine:
     def tile_batch(self,request):
         """Several tiles of one seed, step and mode in a single request: browsers allow only six connections per
         host, fewer than the engine has map workers."""
-        places=[tuple(int(v) for v in place.split(',')) for place in request['at'].split(';')]
-        if not 1<=len(places)<=16 or any(len(place)!=2 for place in places): raise ValueError('Ask for 1–16 tiles at a time')
+        places=self.tile_places(request)
         jobs=[TILE_POOL.submit(self.tile,dict(request,x=x,z=z)) for x,z in places]
         return {'tiles':[job.result() for job in jobs]}
+    @staticmethod
+    def tile_places(request):
+        places=[tuple(int(v) for v in place.split(',')) for place in request['at'].split(';')]
+        if not 1<=len(places)<=16 or any(len(place)!=2 for place in places): raise ValueError('Ask for 1–16 tiles at a time')
+        return places
     def map_request(self,request,command):
         seed=str(int(request['seed']));x,z=int(request['x']),int(request['z'])
         if not -(1<<63)<=int(seed)<(1<<63) or max(abs(x),abs(z))>29980000: raise ValueError('Invalid map coordinates or seed')
@@ -389,6 +393,27 @@ class Handler(BaseHTTPRequestHandler):
         return origin is None or origin in (f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}')
     def do_GET(self):
         if not self.trusted(): return self.reply({'error':'Invalid local origin'},403)
+        if urlsplit(self.path).path=='/api/tile-stream':
+            # Deliver completed tiles immediately. A difficult column must not hold all its neighbours hostage.
+            try:
+                query=parse_qs(urlsplit(self.path).query)
+                request={k:query[k][0] for k in ('seed','step','mode','at')}
+                places=self.server.engine.tile_places(request)
+            except (ValueError,KeyError,TypeError) as error: return self.reply({'error':str(error)},400)
+            jobs={TILE_POOL.submit(self.server.engine.tile,dict(request,x=x,z=z)):i for i,(x,z) in enumerate(places)}
+            self.send_response(200);self.send_header('Content-Type','application/x-ndjson')
+            self.send_header('Cache-Control','no-store');self.send_header('Connection','close');self.end_headers()
+            self.close_connection=True
+            try:
+                for job in as_completed(jobs):
+                    try: record={'index':jobs[job],'tile':job.result()}
+                    except Exception as error: record={'index':jobs[job],'error':str(error)}
+                    self.wfile.write((json.dumps(record,separators=(',',':'))+'\n').encode());self.wfile.flush()
+            except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError): pass
+            finally:
+                # Panning away closes the stream. Cancel queued work; already-running native tiles finish and cache.
+                for job in jobs: job.cancel()
+            return
         if urlsplit(self.path).path=='/api/tile':
             try:
                 query=parse_qs(urlsplit(self.path).query)

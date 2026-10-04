@@ -107,6 +107,16 @@ class MapTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):
             urllib.request.urlopen(BASE + '/api/tiles?' + urllib.parse.urlencode(dict(seed='123', step=8, mode='terrain', at='0')), timeout=120)
 
+    def test_stream_returns_identical_tiles(self):
+        for mode,step in (('terrain',1),('terrain',8),('quick',32)):
+            places=((0,0),(-256,512),(256,0))
+            query=urllib.parse.urlencode(dict(seed='123',step=step,mode=mode,at=';'.join(f'{x},{z}' for x,z in places)))
+            with urllib.request.urlopen(BASE+'/api/tile-stream?'+query,timeout=120) as response:
+                records=[json.loads(line) for line in response]
+            self.assertEqual(sorted(r['index'] for r in records),[0,1,2])
+            records.sort(key=lambda r:r['index'])
+            self.assertEqual([r['tile'] for r in records],[tile(seed='123',x=x,z=z,step=step,mode=mode)[0] for x,z in places])
+
     def test_quick_overview_follows_terrain(self):
         # Wide views use the quick biome map: no terrain columns, water only where the biome is ocean or river.
         same = total = 0

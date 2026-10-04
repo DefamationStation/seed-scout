@@ -15,6 +15,7 @@ import net.minecraft.server.packs.resources.MultiPackResourceManager;
 import net.minecraft.core.*;
 import net.minecraft.core.registries.*;
 import net.minecraft.resources.*;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.TagLoader;
 import net.minecraft.world.level.*;
@@ -87,9 +88,11 @@ public final class SeedEngine {
         access.lookupOrThrow(Registries.STRUCTURE_SET).listElements().forEach(h->{
             if(h.value().structures().stream().anyMatch(e->e.structure().value().biomes().stream().anyMatch(generator.getBiomeSource().possibleBiomes()::contains))) sets.put(h.key().identifier().getPath(),h);
         });
-        for(var placement:RuinedPortalPiece.VerticalPlacement.values())if(placement!=RuinedPortalPiece.VerticalPlacement.IN_NETHER)
-            sets.put("ruined_portals_"+placement.getSerializedName(),sets.get("ruined_portals"));
-        for(String family:List.of("villages","mineshafts","ocean_ruins","shipwrecks","abandoned_camp","ruined_portals")) {
+        sets.put("huge_ruined_portals",sets.get("ruined_portals"));
+        for(String family:List.of("ruined_portals","huge_ruined_portals"))
+            for(var placement:RuinedPortalPiece.VerticalPlacement.values())if(placement!=RuinedPortalPiece.VerticalPlacement.IN_NETHER)
+                sets.put(family+"_"+placement.getSerializedName(),sets.get("ruined_portals"));
+        for(String family:List.of("villages","mineshafts","ocean_ruins","shipwrecks","abandoned_camp","ruined_portals","huge_ruined_portals")) {
             var holder=sets.get(family);var variants=new ArrayList<String>();
             for(var entry:holder.value().structures())if(entry.structure().value().biomes().stream().anyMatch(generator.getBiomeSource().possibleBiomes()::contains)) {
                 String detail=entry.structure().unwrapKey().orElseThrow().identifier().getPath(),key=family+"__"+detail;
@@ -249,7 +252,7 @@ public final class SeedEngine {
                 // Only a match beyond the cap proves the list is incomplete.
                 if(++count>TILE_CAP){limited.add(key);break;}
                 var marker=new HashMap<String,Object>(Map.of("kind","structure","key",key,"detail",hit.detail(),"x",pos.getX(),"y",hit.y,"z",pos.getZ(),"confidence","Snapshot generation point confirmed"));
-                if(set==set("ruined_portals"))marker.put("placement",portalPlacement(hit).getSerializedName());
+                if(set==set("ruined_portals"))portalFacts(marker,hit);
                 found.add(marker);
             }
         }
@@ -263,8 +266,35 @@ public final class SeedEngine {
         var hit=(bx&15)!=0||(bz&15)!=0?null:startAt(set,seed,state,structState,state.createClimateSampler(SamplerContext.EMPTY_UNCACHED),new ChunkPos(bx>>4,bz>>4),true);
         if(hit==null||!portalMatches(key,hit,set,seed,state,structState,state.createClimateSampler(SamplerContext.EMPTY_UNCACHED),new ChunkPos(bx>>4,bz>>4)))return Map.of("valid",false);
         var box=hit.start.getBoundingBox();
-        return Map.of("valid",true,"kind","structure","key",key,"detail",hit.detail(),"x",x,"y",hit.y,"z",z,"confidence","Snapshot structure start confirmed",
-            "box",Map.of("minX",box.minX(),"minY",box.minY(),"minZ",box.minZ(),"maxX",box.maxX(),"maxY",box.maxY(),"maxZ",box.maxZ()),"pieces",hit.start.getPieces().size());
+        var result=new LinkedHashMap<String,Object>(Map.of("valid",true,"kind","structure","key",key,"detail",hit.detail(),"x",x,"y",hit.y,"z",z,"confidence","Snapshot structure start confirmed",
+            "box",Map.of("minX",box.minX(),"minY",box.minY(),"minZ",box.minZ(),"maxX",box.maxX(),"maxY",box.maxY(),"maxZ",box.maxZ()),"pieces",hit.start.getPieces().size()));
+        if(set==set("ruined_portals"))portalFacts(result,hit);
+        result.put("stand",stand(hit,state));
+        return result;
+    }
+    // Where to teleport to for a built structure: an open block to stand in, beside it or inside it.
+    // Only base terrain and the pieces' boxes are known here, not the placed blocks, so this is a best estimate.
+    static Map<String,Object> stand(Start hit,RandomState state) {
+        var start=hit.start;var box=start.getBoundingBox();
+        // Small surface structures (igloos, shipwrecks, huts, temples) are built at a placeholder height and moved onto
+        // the terrain later, so their box height says nothing. Only the others can be told to be buried.
+        var type=hit.structure.value();
+        boolean placed=type.step()!=GenerationStep.Decoration.SURFACE_STRUCTURES||type instanceof net.minecraft.world.level.levelgen.structure.structures.RuinedPortalStructure;int midX=(box.minX()+box.maxX())>>1,midZ=(box.minZ()+box.maxZ())>>1;
+        // Two blocks outside the middle of each side, on the ground there (the sea or river bed when it is under water).
+        Map<String,Object> best=null;int bestScore=Integer.MAX_VALUE;
+        for(int[] at:new int[][]{{midX,box.minZ()-2},{midX,box.maxZ()+2},{box.minX()-2,midZ},{box.maxX()+2,midZ}}) {
+            var column=Surface.of(generator.getBaseColumn(at[0],at[1],heights,state));int y=column.ground+1;
+            // A structure that does not reach the ground here is buried: standing above it would not show it.
+            if(placed&&box.maxY()<column.ground-2)continue;
+            // Prefer a side level with the structure, and dry land over water.
+            int score=(placed?Math.abs(y-Math.clamp(y,box.minY(),box.maxY()+1))*4+Math.abs(y-box.minY()):0)+(column.water?8:0);
+            if(score<bestScore){bestScore=score;best=Map.of("x",at[0],"y",y,"z",at[1],"where",column.water?"beside it, under water":"beside it");}
+        }
+        if(best!=null)return best;
+        // Buried: inside the first piece (the one the structure grows from), on its floor.
+        var piece=start.getPieces().get(0);var inner=piece.getBoundingBox();
+        int floor=inner.minY()+(piece instanceof PoolElementStructurePiece pool?pool.getGroundLevelDelta():1);
+        return Map.of("x",(inner.minX()+inner.maxX())>>1,"y",Math.min(floor,inner.maxY()),"z",(inner.minZ()+inner.maxZ())>>1,"where","inside it");
     }
     // exclude: the seed passes only when nothing matches; otherwise it needs count matches between minRadius and radius.
     // near names the id of another condition: this one is then measured from each of that condition's matches.
@@ -280,13 +310,19 @@ public final class SeedEngine {
         return result;
     }
     static Map<String,Object> evaluate(long seed,JsonObject request,JsonArray wanted,Job job) {
+        var parsed=job==null?parseFeatures(wanted):job.parsed;
+        boolean custom=request.has("anchor") && request.get("anchor").getAsString().equals("custom");
         var state=RandomState.create(access.lookupOrThrow(Registries.NOISE),seed,generator.generatorSettings().value());
-        var origin=generator.getOrigin(state);
+        var gate=job==null?spawnGate(parsed):job.spawnGate;
+        var targets=generator.generatorSettings().value().spawnTarget();
+        var origin=!custom && gate!=null && !targets.isEmpty()
+            ? SpawnSearch.find(state,targets,(cx,cz)->placementGate(gate,seed,cx,cz))
+            : generator.getOrigin(state);
+        if(origin==null)return null;
         int x=request.has("anchor") && request.get("anchor").getAsString().equals("custom")?request.get("x").getAsInt():origin.getMiddleBlockX();
         int z=request.has("anchor") && request.get("anchor").getAsString().equals("custom")?request.get("z").getAsInt():origin.getMiddleBlockZ();
         var structState=ChunkGeneratorStructureState.createForNormal(state,seed,origin,generator.getBiomeSource(),access.lookupOrThrow(Registries.STRUCTURE_SET));
         var groups=new ArrayList<List<Map<String,Object>>>();
-        var parsed=parseFeatures(wanted);
         String biomeMode=request.has("biomeMode")?request.get("biomeMode").getAsString():"terrain";
         // Pass 1 tests structures with the generation-point check the game uses for /locate,
         // which avoids assembling pieces for seeds that fail another feature anyway.
@@ -321,6 +357,22 @@ public final class SeedEngine {
         result.put("spawnAccuracy","Snapshot spawn-region estimate; final player spawn may shift.");
         return result;
     }
+    // Gate on one necessary positive root condition. Never prune on exclusions,
+    // dependent conditions, biome samples, or unsupported placement types.
+    static Feature spawnGate(List<Feature> features) {
+        return features.stream().filter(f->f.kind.equals("structure") && !f.exclude && f.near==null && f.radius<=256)
+            .filter(f->set(f.key).placement() instanceof RandomSpreadStructurePlacement p && p.spacing()>=32)
+            .min(Comparator.comparingDouble(f->(double)f.radius/((RandomSpreadStructurePlacement)set(f.key).placement()).spacing())).orElse(null);
+    }
+    static java.util.function.Predicate<ChunkPos> placementGate(Feature f,long seed,int cx,int cz) {
+        var placement=(RandomSpreadStructurePlacement)set(f.key).placement();
+        int margin=512+8+f.radius;var offset=placement.locateOffset();int spacing=placement.spacing();
+        int minX=Math.floorDiv(Math.floorDiv(cx-margin-offset.getX(),16),spacing),maxX=Math.floorDiv(Math.floorDiv(cx+margin-offset.getX(),16),spacing);
+        int minZ=Math.floorDiv(Math.floorDiv(cz-margin-offset.getZ(),16),spacing),maxZ=Math.floorDiv(Math.floorDiv(cz+margin-offset.getZ(),16),spacing);
+        var positions=new ArrayList<BlockPos>();
+        for(int rx=minX;rx<=maxX;rx++)for(int rz=minZ;rz<=maxZ;rz++)positions.add(placement.getLocatePos(placement.getPotentialStructureChunk(seed,rx*spacing,rz*spacing)));
+        return origin->{int count=0;for(var pos:positions){double distance=Math.hypot((double)pos.getX()-origin.getMiddleBlockX(),(double)pos.getZ()-origin.getMiddleBlockZ());if(distance>=f.minRadius && distance<=f.radius && ++count>=f.count)return true;}return false;};
+    }
     static Map<String,Object> found(Feature f,BlockPos pos,int x,int z,String detail,String confidence) {
         return Map.of("kind",f.kind,"key",f.key,"x",pos.getX(),"y",pos.getY(),"z",pos.getZ(),"distance",Math.round(Math.hypot(pos.getX()-x,pos.getZ()-z)),"detail",detail,"confidence",confidence);
     }
@@ -328,16 +380,31 @@ public final class SeedEngine {
     // Read the game's placement from the generated piece, rather than guessing from Y or biome.
     // Each placement option uses the original set and weighted selection; filter only after selection.
     static boolean portalMatches(String key,Start hit,StructureSet set,long seed,RandomState state,ChunkGeneratorStructureState structState,Climate.Sampler climate,ChunkPos chunk) {
+        boolean huge=key.equals("huge_ruined_portals")||key.startsWith("huge_ruined_portals_");
+        String family=huge?"huge_ruined_portals":"ruined_portals";
+        if(huge||key.startsWith("ruined_portals_")&&!variantDetails.containsKey(key)) {
+            if(hit.start==null)hit=startAt(set,seed,state,structState,climate,chunk,true);
+            if(hit==null||huge&&!hugePortal(hit))return false;
+        }
         if(variantDetails.containsKey(key))return variantDetails.get(key).equals(hit.detail());
-        if(!key.startsWith("ruined_portals_"))return true;
-        if(hit.start==null)hit=startAt(set,seed,state,structState,climate,chunk,true);
-        if(hit==null)return false;
-        return key.equals("ruined_portals_"+portalPlacement(hit).getSerializedName());
+        return !key.startsWith(family+"_")||key.equals(family+"_"+portalPlacement(hit).getSerializedName());
+    }
+    static CompoundTag portalTag(Start hit) {
+        for(var piece:hit.start.getPieces())if(piece instanceof RuinedPortalPiece)
+            return piece.createTag(pieceContext);
+        throw new IllegalStateException("Ruined portal start has no portal piece");
     }
     static RuinedPortalPiece.VerticalPlacement portalPlacement(Start hit) {
-        for(var piece:hit.start.getPieces())if(piece instanceof RuinedPortalPiece)
-            return piece.createTag(pieceContext).read("VerticalPlacement",RuinedPortalPiece.VerticalPlacement.CODEC).orElseThrow();
-        throw new IllegalStateException("Ruined portal start has no portal piece");
+        return portalTag(hit).read("VerticalPlacement",RuinedPortalPiece.VerticalPlacement.CODEC).orElseThrow();
+    }
+    static boolean hugePortal(Start hit) {
+        return Identifier.parse(portalTag(hit).getStringOr("Template","")).getPath().startsWith("ruined_portal/giant_portal_");
+    }
+    static void portalFacts(Map<String,Object> result,Start hit) {
+        var tag=portalTag(hit);String template=Identifier.parse(tag.getStringOr("Template","")).getPath();
+        result.put("portalTemplate",template);
+        result.put("portalSize",template.startsWith("ruined_portal/giant_portal_")?"huge":"regular");
+        result.put("placement",tag.read("VerticalPlacement",RuinedPortalPiece.VerticalPlacement.CODEC).orElseThrow().getSerializedName());
     }
     // Every chunk the placement could use in the chunk rectangle, produced lazily; ring positions ignore the rectangle.
     static Stream<ChunkPos> candidates(StructurePlacement placement,long seed,ChunkGeneratorStructureState structState,int minX,int maxX,int minZ,int maxZ) {
@@ -393,7 +460,7 @@ public final class SeedEngine {
             for(var d:deps) {
                 var matches=new ArrayList<Map<String,Object>>();
                 // A condition on the parent's own type must not count the parent itself.
-                boolean same=d.kind.equals("structure")&&d.key.equals(parent.key);
+                boolean same=d.kind.equals("structure")&&set(d.key)==set(parent.key);
                 if(d.kind.equals("structure"))findStructures(d,seed,state,structState,pos.getX(),pos.getZ(),job,matches,d.count+(same?1:0),confirm&&!d.exclude,null);
                 else {var b=findBiome(d,seed,state,pos.getX(),pos.getZ(),job,biomeMode);if(b!=null)matches.add(b);}
                 if(same)matches.removeIf(m->((Number)m.get("x")).intValue()==pos.getX()&&((Number)m.get("z")).intValue()==pos.getZ());
@@ -429,7 +496,9 @@ public final class SeedEngine {
                 if((extra=companions.apply(pos,false))==null)continue;
                 if(confirm&&((hit=startAt(set,seed,state,structState,climate,c,true))==null||(extra=companions.apply(pos,true))==null))continue;
             }
-            out.add(found(f,new BlockPos(pos.getX(),hit.y,pos.getZ()),x,z,hit.detail(),confirm?"Snapshot structure start confirmed":"Snapshot generation point confirmed"));
+            var match=new LinkedHashMap<>(found(f,new BlockPos(pos.getX(),hit.y,pos.getZ()),x,z,hit.detail(),confirm?"Snapshot structure start confirmed":"Snapshot generation point confirmed"));
+            if(hit.start!=null&&set==set("ruined_portals"))portalFacts(match,hit);
+            out.add(match);
             out.addAll(extra);taken++;
         }
         return taken;
@@ -465,6 +534,7 @@ public final class SeedEngine {
         return null;
     }
     static final class Job {
+        final List<Feature> parsed;final Feature spawnGate;
         final JsonObject request;final JsonArray features;final long id,start,limit;final int threads,maxMatches;
         // When given, these seeds are checked instead of counting up from start (re-checking catalogued seeds).
         final long[] seeds;
@@ -474,7 +544,7 @@ public final class SeedEngine {
         synchronized void complete(long index){unfinished.remove(index);}
         synchronized long checkpoint(){return unfinished.isEmpty()?next.get():unfinished.first();}
         final long began=System.nanoTime();volatile String failure="";ScheduledFuture<?> reporting;
-        Job(JsonObject r){request=r;features=r.getAsJsonArray("features");id=r.get("id").getAsLong();start=Long.parseLong(r.get("seed").getAsString());threads=r.get("threads").getAsInt();maxMatches=r.get("maxMatches").getAsInt();
+        Job(JsonObject r){request=r;features=r.getAsJsonArray("features");parsed=parseFeatures(features);spawnGate=spawnGate(parsed);id=r.get("id").getAsLong();start=Long.parseLong(r.get("seed").getAsString());threads=r.get("threads").getAsInt();maxMatches=r.get("maxMatches").getAsInt();
             seeds=r.has("seeds")?StreamSupport.stream(r.getAsJsonArray("seeds").spliterator(),false).mapToLong(e->Long.parseLong(e.getAsString())).toArray():null;
             limit=seeds!=null?seeds.length:r.get("limit").getAsLong();}
         void report(boolean done){emit(Map.of("type","progress","id",id,"tested",tested.sum(),"matches",Math.min(matches.get(),maxMatches),"seconds",(System.nanoTime()-began)/1e9,"running",!done,"error",failure,"nextSeed",Long.toString(start+checkpoint())));}

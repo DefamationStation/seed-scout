@@ -141,6 +141,15 @@ The catalogue is stored in `catalogue.db` (SQLite) next to `app.py`.
 
 ## Implementation and requirements
 
+Narrow searches near spawn now reject impossible seeds before completing all of
+the spawn-noise sampling. For **woodland mansion within 100 blocks**, a same-seed
+comparison on this PC improved from **2,623 to 16,541 seeds/second on four
+workers**, returning the same matches. Longer runs reached about 50,500 on 16
+workers and 67,300 on 28. The speedup preserves the snapshot's spawn selection
+and structure confirmation; it is most useful for narrow nearby-structure
+conditions. See [the measurements, algorithm and validation](SEARCH-PERFORMANCE.md).
+Existing worker preferences are retained; change them under **Search controls**.
+
 Python's standard library serves a local-only browser UI. A persistent Java process runs parallel
 search workers, checking candidate structure placements before building valid structure starts.
 Nothing is installed into Minecraft, and existing saves are not opened or modified.
@@ -233,6 +242,12 @@ by Minecraft's generated portal piece; they are not inferred from biome or heigh
 the game's **on ocean floor** generation type even when they sit on dry land. In Find and Layers, biome
 and placement filters apply together on the same portal. Minecraft's sixth placement, **in Nether**, is not offered because
 this engine searches the Overworld.
+**Huge ruined portals** is a separate search category and map layer, with the same biome and
+placement options. It accepts only the game's three `giant_portal` templates, chosen with a
+5% chance by this snapshot; size is read from the generated template rather than guessed from
+the bounding box. **Ruined portals (any size)** still includes both sizes. Huge markers show
+their size in the inspector, and enabling both layers draws each physical portal only once.
+At normal layer zoom levels the two layers share portal tile requests and cached data.
 When markers would overlap, the more important one keeps its icon and the others shrink to dots until
 you zoom in. A layer that would need more than 600 markers in one map tile reports "too many here"
 and shows only part of them; zoom in, or move that layer to a closer zoom level. Ocean monuments and
@@ -264,3 +279,8 @@ are assigned in later world-generation stages and are not predicted by this map.
 **Go to** (the crosshair button, or **G**) travels to X/Z coordinates, or finds the nearest structure or
 biome of a kind within 2,000 blocks of the map centre and pins it to the map.
 The ten unsupported feature types listed in the coverage discussion have not been added as search filters.
+
+Map loading streams each completed tile and abandons obsolete browser requests after panning.
+Controlled measurements show about 25% less waiting for the first detailed tile, with complete-view
+terrain time essentially unchanged. See [MAP-PERFORMANCE.md](MAP-PERFORMANCE.md) for measurements,
+limitations and reproduction. Saved search worker counts above eight also survive page reloads.

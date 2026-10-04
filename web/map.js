@@ -16,7 +16,7 @@ const worldMap = (() => {
     ['strongholds', 64], ['woodland_mansions', 64],
     ['ancient_cities', 16], ['ocean_monuments', 16], ['villages', 16], ['pillager_outposts', 16],
     ['desert_pyramids', 8], ['jungle_temples', 8], ['swamp_huts', 8], ['igloos', 8], ['trail_ruins', 8], ['abandoned_camp', 8],
-    ['trial_chambers', 4], ['ruined_portals', 4], ['shipwrecks', 4], ['ocean_ruins', 4], ['buried_treasures', 4],
+    ['trial_chambers', 4], ['huge_ruined_portals', 4], ['ruined_portals', 4], ['shipwrecks', 4], ['ocean_ruins', 4], ['buried_treasures', 4],
     ['mineshafts', 2],
   ];
   const DEFAULT_LAYERS = { basemap: 'biome', relief: true, contours: false, grid: false, slime: false, spawn: true, matches: true, labels: true, structures: true, features: {} };
@@ -30,8 +30,9 @@ const worldMap = (() => {
   let active = 0, featureActive = 0, frame = 0, anim = 0, legendTimer = 0, clickToken = 0, drawn = 0;
   let selection = null, hover = null, drag = null, pinch = null, measure = null, pendingFit = false;
   let markerList = [], matchMarkers = [], markersDirty = true, featureCache = null, statsKey = '';
-  const pointers = new Map(), cache = new Map(), pending = new Set(), failed = new Map();
+  const pointers = new Map(), cache = new Map(), pending = new Set(), failed = new Map(), tileStreams = new Map();
   let terrainView = '', terrainTiles = [], previewTiles = [], terrainTimer = 0, terrainAfter = 0, terrainRetry = 0;
+  let supportsTileStream = true;
   const featureTiles = new Map(), featurePending = new Set(), featureFailed = new Map();
   const pins = new Map(), listeners = {}, paths = new Map(), slime = new Map();
 
@@ -79,31 +80,64 @@ const worldMap = (() => {
       clearTimeout(terrainTimer); terrainTimer = setTimeout(pump, terrainAfter - Date.now()); return;
     }
     const { fine, queue } = wanted();
-    // Tiles are fetched several per request, nearest first: the browser allows six connections to the app,
-    // fewer than the engine has map workers, and half of them are left for structure layers.
+    const relevant = new Set([...fine, ...previewTiles].map(t => t.key));
+    for (const [controller, tiles] of tileStreams) if (tiles.every(t => !relevant.has(t.key))) controller.abort();
     const todo = queue.filter(t => !cache.has(t.key) && !pending.has(t.key) && (failed.get(t.key) || 0) <= Date.now());
-    const batch = todo[0]?.mode === 'quick' ? 12 : Math.max(1, Math.ceil((catalog?.mapWorkers || 2) * 1.5 / TILE_REQUESTS));
+    // Keep a small amount of work ahead of the native workers. Deeper queues increase the cost of
+    // panning away: native columns already running finish even after their stream is abandoned.
+    const batch = todo[0]?.mode === 'quick' ? 12 : Math.min(16, Math.max(1, Math.ceil((catalog?.mapWorkers || 2) * 1.5 / TILE_REQUESTS)));
     while (active < TILE_REQUESTS && todo.length) {
-      const tiles = todo.splice(0, batch), { seed, step, mode } = tiles[0];
-      active++; for (const tile of tiles) pending.add(tile.key);
-      fetch(`/api/tiles?${new URLSearchParams({ v: '4', seed, step, mode, at: tiles.map(t => `${t.x},${t.z}`).join(';') })}`)
-        .then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Tile request failed'); return data.tiles; })
-        .then(list => {
-          list.forEach((data, i) => cache.set(tiles[i].key, { data, image: null, style: '' }));
-          // Neighbours were drawn without these tiles' edge samples; redraw them now that they are here.
-          for (const tile of tiles) for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
-            const near = (dx || dz) && cache.get(tileKey(tile.seed, tile.x + dx * tile.step * 32, tile.z + dz * tile.step * 32, tile.step, tile.mode));
-            if (near) near.style = '';
+      const tiles = todo.splice(0, batch), { seed, step, mode } = tiles[0], controller = new AbortController();
+      active++; tileStreams.set(controller, tiles); for (const tile of tiles) pending.add(tile.key);
+      const receive = record => {
+        const tile = tiles[record.index];
+        if (!tile || !pending.has(tile.key)) throw new Error('Invalid tile response');
+        if (record.error) throw new Error(record.error);
+        const data = record.tile;
+        if (!data || tileKey(data.seed, data.x, data.z, data.step, data.mode) !== tile.key) throw new Error('Unexpected tile response');
+        cache.set(tile.key, { data, image: null, style: '' });
+        // Neighbours were drawn without this tile's edge samples.
+        for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+          const near = (dx || dz) && cache.get(tileKey(tile.seed, tile.x + dx * tile.step * 32, tile.z + dz * tile.step * 32, tile.step, tile.mode));
+          if (near) near.style = '';
+        }
+        const budget = Math.max(CACHE_SIZE, wanted().fine.length + previewTiles.length);
+        while (cache.size > budget) cache.delete(cache.keys().next().value);
+      };
+      const query = new URLSearchParams({ v: '4', seed, step, mode, at: tiles.map(t => `${t.x},${t.z}`).join(';') });
+      const streaming = supportsTileStream;
+      fetch(`/api/${streaming ? 'tile-stream' : 'tiles'}?${query}`, { signal: controller.signal })
+        .then(async response => {
+          // A page can be refreshed after an update while the previous local engine is still running.
+          // Keep that combination usable until the app is restarted.
+          let stream = streaming;
+          if (stream && response.status === 404) {
+            supportsTileStream = stream = false;
+            response = await fetch(`/api/tiles?${query}`, { signal: controller.signal });
           }
-          const budget = Math.max(CACHE_SIZE, wanted().fine.length + previewTiles.length);
-          while (cache.size > budget) cache.delete(cache.keys().next().value);
+          if (!response.ok) throw new Error((await response.json()).error || 'Tile request failed');
+          if (!stream) { (await response.json()).tiles.forEach((tile, index) => receive({ tile, index })); return; }
+          const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '';
+          try {
+            while (true) {
+              const { value, done } = await reader.read();
+              buffer += decoder.decode(value, { stream: !done });
+              let end;
+              while ((end = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, end); buffer = buffer.slice(end + 1); if (line) receive(JSON.parse(line)); }
+              invalidate(); pump();
+              if (done) break;
+            }
+            if (buffer.trim() || tiles.some(t => !cache.has(t.key))) throw new Error('Incomplete tile response');
+          } finally { reader.releaseLock(); }
         })
         .catch(e => {
-          for (const tile of tiles) failed.set(tile.key, Date.now() + 10000);
+          controller.abort();
+          if (e.name === 'AbortError') return;
+          for (const tile of tiles) if (!cache.has(tile.key)) failed.set(tile.key, Date.now() + 10000);
           if (!terrainRetry) terrainRetry = setTimeout(() => { terrainRetry = 0; pump(); }, 10050);
           if (result?.seed === seed) $('status-tiles').textContent = `Map tile failed: ${e.message}`;
         })
-        .finally(() => { active--; for (const tile of tiles) pending.delete(tile.key); invalidate(); pump(); queueLegend(); });
+        .finally(() => { active--; tileStreams.delete(controller); for (const tile of tiles) pending.delete(tile.key); invalidate(); pump(); queueLegend(); });
     }
     const loaded = fine.filter(t => cache.has(t.key)).length, done = loaded === fine.length;
     const step = fine[0]?.step || 0, quality = modeFor(step) === 'quick' ? 'Biome overview' : 'Base terrain';
@@ -150,23 +184,27 @@ const worldMap = (() => {
   const defaultFeature = key => ({ on: true, from: (FEATURE_DEFAULTS.find(d => d[0] === key) || [key, 8])[1] });
   function features() {
     if (featureCache) return featureCache;
-    const ranked = FEATURE_DEFAULTS.map(d => d[0]), known = catalog ? catalog.sets.filter(k => !k.includes('__') && (!k.startsWith('ruined_portals_') || k === 'ruined_portals')) : ranked;
+    const ranked = FEATURE_DEFAULTS.map(d => d[0]), known = catalog ? catalog.sets.filter(k => !k.includes('__') && !/^(huge_)?ruined_portals_/.test(k)) : ranked;
     const order = [...ranked.filter(k => known.includes(k)), ...known.filter(k => !ranked.includes(k)).sort()];
     const list = order.map((key, rank) => ({ key, rank, ...defaultFeature(key), ...layers.features[key] }));
     if (catalog) featureCache = list;
     return list;
   }
   const tileSize = from => Math.max(1024, Math.min(32768, from * 512));
-  const markerId = f => `${f.kind}:${f.key}:${f.x}:${f.z}`;
+  const markerId = f => `${f.kind}:${f.portalSize ? 'ruined_portals' : f.key}:${f.x}:${f.z}`;
+  // Small tiles can share the any-size portal data. Wide giant-only tiles need their own
+  // request so the common portal marker limit cannot hide rare giant portals.
+  const featureRequestKey = (key, size) => key === 'huge_ruined_portals' && size <= 8192 ? 'ruined_portals' : key;
   function featureTilesInView(feature) {
     const size = tileSize(feature.from), view = bounds(), tiles = [];
     for (let z = Math.floor(view.top / size) * size; z < view.bottom; z += size)
       for (let x = Math.floor(view.left / size) * size; x < view.right; x += size)
-        if (Math.abs(x) <= LIMIT - size && Math.abs(z) <= LIMIT - size) tiles.push({ size, x, z, id: `${result.seed}:${feature.key}:${size}:${x}:${z}` });
+        if (Math.abs(x) <= LIMIT - size && Math.abs(z) <= LIMIT - size) tiles.push({ size, x, z, id: `${result.seed}:${featureRequestKey(feature.key, size)}:${size}:${x}:${z}` });
     return tiles;
   }
   const featureShown = f => layers.structures && f.on && bpp <= f.from;
-  const variantShown = (feature, marker) => (!Array.isArray(feature.variants) || feature.variants.includes(marker.detail)) &&
+  const variantShown = (feature, marker) => (feature.key !== 'huge_ruined_portals' || marker.portalSize === 'huge') &&
+    (!Array.isArray(feature.variants) || feature.variants.includes(marker.detail)) &&
     (!Array.isArray(feature.placements) || feature.placements.includes(marker.placement));
   function pumpFeatures() {
     if (!result || !width || !catalog) return;
@@ -179,11 +217,13 @@ const worldMap = (() => {
     }
     queue.sort((a, b) => a.rank - b.rank || a.distance - b.distance);
     for (const job of queue) {
+      if (featurePending.has(job.id)) continue;
       if (featureActive >= 3) break;
       featureActive++; featurePending.add(job.id);
-      api('/api/structures', { seed: result.seed, x: job.x, z: job.z, size: job.size, keys: [job.key] })
+      const requestKey = featureRequestKey(job.key, job.size);
+      api('/api/structures', { seed: result.seed, x: job.x, z: job.z, size: job.size, keys: [requestKey] })
         .then(response => {
-          featureTiles.set(job.id, { limited: (response.limited || []).includes(job.key), features: response.features.map(f => ({ ...f, id: markerId(f), source: 'auto', rank: job.rank })) });
+          featureTiles.set(job.id, { limited: (response.limited || []).includes(requestKey), features: response.features.map(f => ({ ...f, id: markerId(f), source: 'auto', rank: job.rank })) });
           while (featureTiles.size > FEATURE_CACHE) featureTiles.delete(featureTiles.keys().next().value);
         })
         .catch(() => featureFailed.set(job.id, Date.now() + 15000))
@@ -196,7 +236,7 @@ const worldMap = (() => {
     markersDirty = false;
     if (!result) { markerList = []; return; }
     const view = bounds(), margin = 30 * bpp, seen = new Set(), gathered = [], stats = {};
-    const add = marker => { if (!seen.has(marker.id)) { seen.add(marker.id); gathered.push(marker); } };
+    const add = marker => { if (!seen.has(marker.id)) { seen.add(marker.id); gathered.push(marker.portalSize === 'huge' ? { ...marker, key: 'huge_ruined_portals' } : marker); } };
     if (selection?.marker) add(selection.marker);
     if (layers.matches) matchMarkers.forEach(add);
     (pins.get(result.seed) || []).forEach(add);
@@ -438,7 +478,7 @@ const worldMap = (() => {
   function update() {
     centre.x = Math.max(-LIMIT, Math.min(LIMIT, centre.x)); centre.z = Math.max(-LIMIT, Math.min(LIMIT, centre.z));
     terrainAfter = Date.now() + 90;
-    markersDirty = true; invalidate(); queueLegend();
+    markersDirty = true; invalidate(); queueLegend(); pump();
   }
   function flyTo(x, z, targetBpp = bpp) {
     cancelAnimationFrame(anim); targetBpp = clampBpp(targetBpp);
@@ -526,6 +566,8 @@ const worldMap = (() => {
         ${fact('Surface', `${esc(label(p.surfaceBlock || (p.water ? 'water' : 'land')))} · Y ${p.surfaceY}`)}
         ${fact('Ground', `Y ${p.groundY}${p.water ? ' · below water' : ''}`)}
         ${p.water ? fact('Water depth', `${p.surfaceY - p.groundY} blocks`) : ''}
+        ${(built?.portalSize || marker?.portalSize) ? fact('Portal size', (built?.portalSize || marker.portalSize) === 'huge' ? 'Huge (giant template)' : 'Regular') : ''}
+        ${(built?.placement || marker?.placement) ? fact('Placement', esc(label(built?.placement || marker.placement))) : ''}
         ${shape ? fact('Structure', `Y ${shape.minY} to ${shape.maxY} <small>${shape.maxX - shape.minX + 1} × ${shape.maxZ - shape.minZ + 1} blocks · ${built.pieces} piece${built.pieces === 1 ? '' : 's'}</small>`) : marker ? fact(marker.kind === 'biome' ? 'Sampled at' : 'Structure Y', `Y ${marker.y}`) : ''}
         ${fact('Nether', `X ${Math.floor(p.x / 8)} · Z ${Math.floor(p.z / 8)}`)}
         ${fact('Slime chunk', p.slimeChunk ? '<span class="yes">Yes</span>' : 'No')}
@@ -540,7 +582,9 @@ const worldMap = (() => {
       <p class="hint">Base terrain prediction. Spawn and completed-world details may differ.</p>`;
       $('info-close').onclick = closeInspector;
       $('info-copy').onclick = () => copyText(`${p.x} ${p.z}`, 'Coordinates copied');
-      $('info-tp').onclick = () => copyText(`/tp @s ${p.x} ~ ${p.z}`, 'Teleport command copied');
+      // A built structure comes with a block to stand in beside or inside it; anywhere else it is the block above the surface.
+      const stand = (built?.valid && built.stand) || { x: p.x, y: p.surfaceY + 1, z: p.z };
+      $('info-tp').onclick = () => copyText(`/tp @s ${stand.x} ${stand.y} ${stand.z}`, `Teleport command copied${stand.where ? ` · ${stand.where}` : ''}`);
       if ($('info-unpin')) $('info-unpin').onclick = () => { pins.set(seed, (pins.get(seed) || []).filter(f => f.id !== marker.id)); closeInspector(); };
     } catch (e) {
       if (token === clickToken) { box.innerHTML = `${head}<p class="notice error">${esc(e.message)}</p>`; $('info-close').onclick = closeInspector; }
@@ -655,6 +699,7 @@ const worldMap = (() => {
   }
   function clear() {
     if (!result) return;
+    for (const controller of tileStreams.keys()) controller.abort();
     result = null; markerList = []; matchMarkers = []; selection = null; hover = null; clickToken++;
     if (measure) setMeasure(false);
     setChrome(false); emit('close');

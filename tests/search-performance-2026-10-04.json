@@ -1,0 +1,420 @@
+{
+  "condition": "woodland_mansions within 100 blocks of spawn region",
+  "seedStart": "-3811937398911544709",
+  "version": "26.4-alpha.2",
+  "baselineCommit": "c99f556",
+  "pairedRuns": {
+    "baseline": [
+      {
+        "threads": 4,
+        "warmup": true,
+        "tested": 10000,
+        "seconds": 3.9908319,
+        "seedsPerSecond": 2505.743226117843,
+        "matches": []
+      },
+      {
+        "threads": 4,
+        "warmup": false,
+        "tested": 100000,
+        "seconds": 38.1236239,
+        "seedsPerSecond": 2623.0454969943194,
+        "matches": [
+          {
+            "seed": "-3811937398911530919",
+            "spawnX": 280,
+            "spawnZ": 424,
+            "anchorX": 280,
+            "anchorZ": 424,
+            "features": [
+              {
+                "detail": "mansion",
+                "key": "woodland_mansions",
+                "confidence": "Snapshot structure start confirmed",
+                "z": 464,
+                "y": 65,
+                "x": 352,
+                "distance": 82,
+                "kind": "structure"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911525498",
+            "spawnX": -1032,
+            "spawnZ": 472,
+            "anchorX": -1032,
+            "anchorZ": 472,
+            "features": [
+              {
+                "detail": "mansion",
+                "key": "woodland_mansions",
+                "confidence": "Snapshot structure start confirmed",
+                "z": 448,
+                "y": 65,
+                "x": -1104,
+                "distance": 76,
+                "kind": "structure"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911504802",
+            "spawnX": 168,
+            "spawnZ": 72,
+            "anchorX": 168,
+            "anchorZ": 72,
+            "features": [
+              {
+                "detail": "mansion",
+                "key": "woodland_mansions",
+                "confidence": "Snapshot structure start confirmed",
+                "z": 144,
+                "y": 62,
+                "x": 128,
+                "distance": 82,
+                "kind": "structure"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911504223",
+            "spawnX": 120,
+            "spawnZ": 184,
+            "anchorX": 120,
+            "anchorZ": 184,
+            "features": [
+              {
+                "detail": "mansion",
+                "key": "woodland_mansions",
+                "confidence": "Snapshot structure start confirmed",
+                "z": 240,
+                "y": 70,
+                "x": 192,
+                "distance": 91,
+                "kind": "structure"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911482066",
+            "spawnX": 600,
+            "spawnZ": 392,
+            "anchorX": 600,
+            "anchorZ": 392,
+            "features": [
+              {
+                "detail": "mansion",
+                "key": "woodland_mansions",
+                "confidence": "Snapshot structure start confirmed",
+                "z": 416,
+                "y": 69,
+                "x": 656,
+                "distance": 61,
+                "kind": "structure"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911477122",
+            "spawnX": 408,
+            "spawnZ": 264,
+            "anchorX": 408,
+            "anchorZ": 264,
+            "features": [
+              {
+                "detail": "mansion",
+                "key": "woodland_mansions",
+                "confidence": "Snapshot structure start confirmed",
+                "z": 240,
+                "y": 62,
+                "x": 384,
+                "distance": 34,
+                "kind": "structure"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911462779",
+            "spawnX": -376,
+            "spawnZ": 392,
+            "anchorX": -376,
+            "anchorZ": 392,
+            "features": [
+              {
+                "detail": "mansion",
+                "key": "woodland_mansions",
+                "confidence": "Snapshot structure start confirmed",
+                "z": 464,
+                "y": 62,
+                "x": -416,
+                "distance": 82,
+                "kind": "structure"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911456680",
+            "spawnX": -504,
+            "spawnZ": 264,
+            "anchorX": -504,
+            "anchorZ": 264,
+            "features": [
+              {
+                "detail": "mansion",
+                "key": "woodland_mansions",
+                "confidence": "Snapshot structure start confirmed",
+                "z": 304,
+                "y": 66,
+                "x": -480,
+                "distance": 47,
+                "kind": "structure"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          }
+        ]
+      }
+    ],
+    "optimized": [
+      {
+        "threads": 4,
+        "warmup": true,
+        "tested": 10000,
+        "seconds": 0.7739667,
+        "seedsPerSecond": 12920.452520760906,
+        "matches": []
+      },
+      {
+        "threads": 4,
+        "warmup": false,
+        "tested": 100000,
+        "seconds": 6.0455238,
+        "seedsPerSecond": 16541.163893854824,
+        "matches": [
+          {
+            "seed": "-3811937398911530919",
+            "spawnX": 280,
+            "spawnZ": 424,
+            "anchorX": 280,
+            "anchorZ": 424,
+            "features": [
+              {
+                "key": "woodland_mansions",
+                "detail": "mansion",
+                "kind": "structure",
+                "distance": 82,
+                "x": 352,
+                "y": 65,
+                "z": 464,
+                "confidence": "Snapshot structure start confirmed"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911525498",
+            "spawnX": -1032,
+            "spawnZ": 472,
+            "anchorX": -1032,
+            "anchorZ": 472,
+            "features": [
+              {
+                "key": "woodland_mansions",
+                "detail": "mansion",
+                "kind": "structure",
+                "distance": 76,
+                "x": -1104,
+                "y": 65,
+                "z": 448,
+                "confidence": "Snapshot structure start confirmed"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911504802",
+            "spawnX": 168,
+            "spawnZ": 72,
+            "anchorX": 168,
+            "anchorZ": 72,
+            "features": [
+              {
+                "key": "woodland_mansions",
+                "detail": "mansion",
+                "kind": "structure",
+                "distance": 82,
+                "x": 128,
+                "y": 62,
+                "z": 144,
+                "confidence": "Snapshot structure start confirmed"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911504223",
+            "spawnX": 120,
+            "spawnZ": 184,
+            "anchorX": 120,
+            "anchorZ": 184,
+            "features": [
+              {
+                "key": "woodland_mansions",
+                "detail": "mansion",
+                "kind": "structure",
+                "distance": 91,
+                "x": 192,
+                "y": 70,
+                "z": 240,
+                "confidence": "Snapshot structure start confirmed"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911482066",
+            "spawnX": 600,
+            "spawnZ": 392,
+            "anchorX": 600,
+            "anchorZ": 392,
+            "features": [
+              {
+                "key": "woodland_mansions",
+                "detail": "mansion",
+                "kind": "structure",
+                "distance": 61,
+                "x": 656,
+                "y": 69,
+                "z": 416,
+                "confidence": "Snapshot structure start confirmed"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911477122",
+            "spawnX": 408,
+            "spawnZ": 264,
+            "anchorX": 408,
+            "anchorZ": 264,
+            "features": [
+              {
+                "key": "woodland_mansions",
+                "detail": "mansion",
+                "kind": "structure",
+                "distance": 34,
+                "x": 384,
+                "y": 62,
+                "z": 240,
+                "confidence": "Snapshot structure start confirmed"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911462779",
+            "spawnX": -376,
+            "spawnZ": 392,
+            "anchorX": -376,
+            "anchorZ": 392,
+            "features": [
+              {
+                "key": "woodland_mansions",
+                "detail": "mansion",
+                "kind": "structure",
+                "distance": 82,
+                "x": -416,
+                "y": 62,
+                "z": 464,
+                "confidence": "Snapshot structure start confirmed"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          },
+          {
+            "seed": "-3811937398911456680",
+            "spawnX": -504,
+            "spawnZ": 264,
+            "anchorX": -504,
+            "anchorZ": 264,
+            "features": [
+              {
+                "key": "woodland_mansions",
+                "detail": "mansion",
+                "kind": "structure",
+                "distance": 47,
+                "x": -480,
+                "y": 66,
+                "z": 304,
+                "confidence": "Snapshot structure start confirmed"
+              }
+            ],
+            "version": "26.4-snapshot-2",
+            "spawnAccuracy": "Snapshot spawn-region estimate; final player spawn may shift."
+          }
+        ]
+      }
+    ]
+  },
+  "scaling": [
+    {
+      "threads": 4,
+      "warmup": false,
+      "tested": 500000,
+      "seconds": 29.0415673,
+      "seedsPerSecond": 17216.701661965744,
+      "matchCount": 45,
+      "matchDigest": "3ef233ee2ca6300f701c50cbab243b4c0f160702b9b7de27a0a89559a87e58df"
+    },
+    {
+      "threads": 8,
+      "warmup": false,
+      "tested": 500000,
+      "seconds": 15.1918617,
+      "seedsPerSecond": 32912.35859526025,
+      "matchCount": 45,
+      "matchDigest": "3ef233ee2ca6300f701c50cbab243b4c0f160702b9b7de27a0a89559a87e58df"
+    },
+    {
+      "threads": 16,
+      "warmup": false,
+      "tested": 500000,
+      "seconds": 9.8985489,
+      "seedsPerSecond": 50512.454406322126,
+      "matchCount": 45,
+      "matchDigest": "3ef233ee2ca6300f701c50cbab243b4c0f160702b9b7de27a0a89559a87e58df"
+    },
+    {
+      "threads": 28,
+      "warmup": false,
+      "tested": 500000,
+      "seconds": 7.4283356,
+      "seedsPerSecond": 67309.82913588341,
+      "matchCount": 45,
+      "matchDigest": "3ef233ee2ca6300f701c50cbab243b4c0f160702b9b7de27a0a89559a87e58df"
+    }
+  ]
+}

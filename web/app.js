@@ -79,6 +79,7 @@ const STRUCTURES = {
   igloos: ['Igloo', 'igloo', 'settlement'], abandoned_camp: ['Abandoned camp', 'camp', 'settlement'],
   desert_pyramids: ['Desert pyramid', 'pyramid', 'ruin'], jungle_temples: ['Jungle temple', 'temple', 'ruin'],
   ruined_portals: ['Ruined portal', 'portal', 'ruin'],
+  huge_ruined_portals: ['Huge ruined portal', 'portal', 'ruin'],
   ruined_portals_on_land_surface: ['Ruined portal (on land surface)', 'portal', 'ruin'],
   ruined_portals_partly_buried: ['Ruined portal (partly buried)', 'portal', 'ruin'],
   ruined_portals_on_ocean_floor: ['Ruined portal (on ocean floor)', 'portal', 'ocean'],
@@ -91,19 +92,21 @@ const STRUCTURES = {
   shipwrecks: ['Shipwreck', 'ship', 'ocean'], buried_treasures: ['Buried treasure', 'chest', 'ocean'],
 };
 const label = key => STRUCTURES[key]?.[0] || String(key).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
-const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks', 'abandoned_camp', 'ruined_portals'];
+const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks', 'abandoned_camp', 'ruined_portals', 'huge_ruined_portals'];
+const PORTAL_FAMILIES = ['ruined_portals', 'huge_ruined_portals'];
+const isPortalFamily = family => PORTAL_FAMILIES.includes(family);
 const PORTAL_PLACEMENTS = ['on_land_surface', 'partly_buried', 'on_ocean_floor', 'in_mountain', 'underground'];
-const familyName = key => ({ villages: 'Villages', mineshafts: 'Mineshafts', ocean_ruins: 'Ocean ruins', shipwrecks: 'Shipwrecks', abandoned_camp: 'Abandoned camps', ruined_portals: 'Ruined portals' })[key] || label(key);
+const familyName = key => ({ villages: 'Villages', mineshafts: 'Mineshafts', ocean_ruins: 'Ocean ruins', shipwrecks: 'Shipwrecks', abandoned_camp: 'Abandoned camps', ruined_portals: 'Ruined portals (any size)', huge_ruined_portals: 'Huge ruined portals' })[key] || label(key);
 function variantName(family, detail) {
   if (family === 'mineshafts') return detail === 'mineshaft' ? 'Normal' : 'Badlands';
   if (family === 'shipwrecks') return detail === 'shipwreck' ? 'Regular' : 'Beached';
-  if (family === 'ruined_portals' && detail === 'ruined_portal') return 'Standard';
-  const prefix = { villages: 'village_', ocean_ruins: 'ocean_ruin_', abandoned_camp: 'abandoned_camp_', ruined_portals: 'ruined_portal_' }[family];
+  if (isPortalFamily(family) && detail === 'ruined_portal') return 'Standard';
+  const prefix = isPortalFamily(family) ? 'ruined_portal_' : { villages: 'village_', ocean_ruins: 'ocean_ruin_', abandoned_camp: 'abandoned_camp_' }[family];
   return (prefix ? detail.replace(prefix, '') : detail).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 }
 const familyVariants = family => catalog?.structureVariants?.[family] || [];
-const familyKeys = family => [family, ...familyVariants(family), ...(family === 'ruined_portals' ? PORTAL_PLACEMENTS.map(p => `ruined_portals_${p}`).filter(k => catalog?.sets.includes(k)) : [])];
-const rootStructure = key => !key.includes('__') && !key.startsWith('ruined_portals_');
+const familyKeys = family => [family, ...familyVariants(family), ...(isPortalFamily(family) ? PORTAL_PLACEMENTS.map(p => `${family}_${p}`).filter(k => catalog?.sets.includes(k)) : [])];
+const rootStructure = key => !key.includes('__') && !PORTAL_FAMILIES.some(family => key.startsWith(`${family}_`));
 function featureStyle(kind, key) {
   if (kind === 'biome') return { icon: 'tree', colour: GROUPS.biome.colour, group: 'biome' };
   const [, glyph = 'pin', group = 'other'] = STRUCTURES[key] || [];
@@ -224,7 +227,24 @@ function syncButtons() {
   $('start').disabled = !catalog || state.running || !chosen.size || emptyFilter;
   $('inspect').disabled = !catalog || !chosen.size || emptyFilter;
 }
-const request = () => ({ ...Object.fromEntries(fields.map(k => [k, $(k).value])), features: [...chosen.entries()].map(([id, f]) => ({ ...f, id, near: f.near || undefined })) });
+function updateConditionField(el) {
+  const f = chosen.get(el.dataset.id); if (!f) return;
+  const value = Math.round(Number(el.value) || 0);
+  if (el.dataset.field === 'count') f.count = Math.max(1, Math.min(10, value));
+  else if (el.dataset.field === 'radius') { f.radius = Math.max(32, Math.min(8000, value)); f.minRadius = Math.min(f.minRadius, f.radius - 32); }
+  else f.minRadius = Math.max(0, Math.min(f.radius - 32, value));
+}
+function commitConditionFields() {
+  // Read visible edits before a request or chooser rebuild, even if blur/change has not fired.
+  const inputs = [...$('chosen').querySelectorAll('[data-field]')];
+  // Apply the new maximum first, so the minimum is clamped against the visible range.
+  inputs.sort((a, b) => Number(a.dataset.field === 'minRadius') - Number(b.dataset.field === 'minRadius'));
+  for (const el of inputs) updateConditionField(el);
+}
+const request = () => {
+  commitConditionFields();
+  return { ...Object.fromEntries(fields.map(k => [k, $(k).value])), features: [...chosen.entries()].map(([id, f]) => ({ ...f, id, near: f.near || undefined })) };
+};
 
 $('features').onchange = e => {
   const el = e.target.closest('[data-key]'); if (!el) return;
@@ -249,22 +269,22 @@ $('features').onclick = e => {
 
 let subcategoryContext = null;
 function openSubcategories(family, mode) {
-  if (mode === 'find') { mergeFamilyConditions(family, true); renderFeatures(); renderChosen(); save(); }
+  if (mode === 'find') { commitConditionFields(); mergeFamilyConditions(family, true); renderFeatures(); renderChosen(); save(); }
   subcategoryContext = { family, mode };
   $('subcategory-title').textContent = familyName(family);
-  $('subcategory-hint').textContent = (mode === 'find' ? 'Selected variants are alternatives in one search condition. For portals, biome and placement must match the same portal.' : family === 'ruined_portals' ? 'Choose which portals appear on the map. Biome and placement filters apply together.' : 'Choose which variants appear on the map.') + (family === 'ruined_portals' ? ' Placement names are Minecraft generation types: swamp portals use “On ocean floor” even on dry land.' : '');
+  $('subcategory-hint').textContent = (mode === 'find' ? 'Selected variants are alternatives in one search condition. For portals, biome and placement must match the same portal.' : isPortalFamily(family) ? 'Choose which portals appear on the map. Biome and placement filters apply together.' : 'Choose which variants appear on the map.') + (isPortalFamily(family) ? ' Placement names are Minecraft generation types: swamp portals use “On ocean floor” even on dry land.' : '');
   renderSubcategories();
   $('subcategory-dialog').showModal();
 }
 function renderSubcategories() {
   const { family, mode } = subcategoryContext, config = mode === 'find' ? chosen.get(`structure:${family}`) : worldMap.features().find(f => f.key === family) || {};
-  $('subcategory-options').classList.toggle('portal-options', family === 'ruined_portals');
+  $('subcategory-options').classList.toggle('portal-options', isPortalFamily(family));
   const variants = familyVariants(family).map(key => ({ key, value: catalog.variantDetails[key], name: variantName(family, catalog.variantDetails[key]) }));
-  const groups = [{ title: family === 'ruined_portals' ? 'Biome variants' : 'Variants', field: 'variants', options: variants }];
-  if (family === 'ruined_portals') groups.push({ title: 'Placements', field: 'placements', options: PORTAL_PLACEMENTS.filter(p => catalog?.sets.includes(`ruined_portals_${p}`)).map(p => ({ key: `ruined_portals_${p}`, value: p, name: label(p) })) });
+  const groups = [{ title: isPortalFamily(family) ? 'Biome variants' : 'Variants', field: 'variants', options: variants }];
+  if (isPortalFamily(family)) groups.push({ title: 'Placements', field: 'placements', options: PORTAL_PLACEMENTS.filter(p => catalog?.sets.includes(`${family}_${p}`)).map(p => ({ key: `${family}_${p}`, value: p, name: label(p) })) });
   const option = (name, key, field, value, checked) => `<label class="subcategory-option"><input type="checkbox" data-subkey="${esc(key)}" data-subfield="${field}" value="${esc(value)}" ${checked ? 'checked' : ''}><span>${esc(name)}</span></label>`;
   const selected = (field, value) => !!config && (!Array.isArray(config[field]) || (value === '*' ? groups.find(g => g.field === field).options.every(o => config[field].includes(o.value)) : config[field].includes(value)));
-  $('subcategory-options').innerHTML = (mode === 'find' ? option(family === 'ruined_portals' ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && !config.variants && !config.placements) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
+  $('subcategory-options').innerHTML = (mode === 'find' ? option(isPortalFamily(family) ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && !config.variants && !config.placements) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
 }
 $('subcategory-options').onchange = e => {
   const el = e.target.closest('[data-subkey]'); if (!el || !subcategoryContext) return;
@@ -299,10 +319,7 @@ $('chosen').onchange = e => {
   const near = e.target.closest('[data-near]');
   if (near) { chosen.get(near.dataset.id).near = near.value; renderChosen(); save(); return; }
   const el = e.target.closest('[data-field]'); if (!el) return;
-  const f = chosen.get(el.dataset.id), value = Math.round(Number(el.value) || 0);
-  if (el.dataset.field === 'count') f.count = Math.max(1, Math.min(10, value));
-  else if (el.dataset.field === 'radius') { f.radius = Math.max(32, Math.min(8000, value)); f.minRadius = Math.min(f.minRadius, f.radius - 32); }
-  else f.minRadius = Math.max(0, Math.min(f.radius - 32, value));
+  updateConditionField(el);
   renderChosen(); save();
 };
 $('chosen').onclick = e => {
@@ -338,8 +355,9 @@ document.querySelectorAll('[data-preset]').forEach(el => el.onclick = () => {
 // resuming continues from where the last run stopped without changing what is typed in the field.
 async function startSearch(fromSeed) {
   try {
+    const payload = request();
     save();
-    const response = await api('/api/start', { ...request(), rareThreshold: Number($('rare-threshold').value) || 100000, useCatalogue: $('rare-first').checked, ...(fromSeed ? { seed: fromSeed } : {}) });
+    const response = await api('/api/start', { ...payload, rareThreshold: Number($('rare-threshold').value) || 100000, useCatalogue: $('rare-first').checked, ...(fromSeed ? { seed: fromSeed } : {}) });
     state.running = true; manualResults = []; selectedSeed = null;
     notice(`Searching from seed ${response.seed}${$('seed').value.trim() || fromSeed ? '' : ' (picked at random)'}.`);
     openPanel('results', true);
@@ -724,6 +742,9 @@ async function poll() {
     catalog = fresh.catalog;
     for (const [family, keys] of Object.entries(catalog.structureVariants || {})) for (const key of keys) {
       STRUCTURES[key] = [`${label(family)} (${variantName(family, catalog.variantDetails[key])})`, STRUCTURES[family][1], STRUCTURES[family][2]];
+    }
+    for (const family of PORTAL_FAMILIES) for (const p of PORTAL_PLACEMENTS) {
+      STRUCTURES[`${family}_${p}`] ||= [`${label(family)} (${label(p).toLowerCase()})`, 'portal', STRUCTURES[family][2]];
     }
     for (const [id, f] of chosen) if (!(f.kind === 'structure' ? catalog.sets : catalog.biomes).includes(f.key)) chosen.delete(id);
     for (const family of STRUCTURE_FAMILIES) mergeFamilyConditions(family);

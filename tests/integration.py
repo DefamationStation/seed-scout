@@ -82,7 +82,8 @@ class SnapshotTests(unittest.TestCase):
         # The prefilter only skips samples, so it can never report a nearer point than the exhaustive scan.
         self.assertGreaterEqual(quick["features"][0]["distance"],full["features"][0]["distance"])
         c=api("/api/status")["catalog"]
-        self.assertIn(c["mapWorkers"],range(2,9))
+        # The map performance update raised the documented cap from 8 to 16.
+        self.assertIn(c["mapWorkers"],range(2,17))
         with self.assertRaises(urllib.error.HTTPError) as e:
             api("/api/start",{"seed":"0","threads":max(8,c["cores"])+1,"limit":1,"features":[{"kind":"structure","key":"villages","radius":1000}]})
         self.assertEqual(e.exception.code,400)
@@ -243,6 +244,59 @@ class SnapshotTests(unittest.TestCase):
                         {'variants':['plains'],'key':'plains','kind':'biome'}):
             self.rejected('/api/inspect',{'seed':land,'features':[{'kind':'structure','key':'ruined_portals','radius':40,**filters}]})
 
+    def test_huge_ruined_portals(self):
+        catalog=api('/api/status')['catalog'];family='huge_ruined_portals'
+        variants=[catalog['variantDetails'][k] for k in catalog['structureVariants'][family]]
+        tile=lambda key:api('/api/structures',{'seed':'123','x':0,'z':0,'size':4096,'keys':[key]})['features']
+        all_portals=tile('ruined_portals');huge=tile(family)
+        positions=lambda items:{(f['x'],f['z']) for f in items}
+        self.assertEqual(positions(huge),positions([f for f in all_portals if f['portalSize']=='huge']))
+        self.assertEqual(positions(huge),{(3520,1008),(3344,3856)})
+        self.assertTrue(all(f['portalTemplate'].startswith('ruined_portal/giant_portal_') for f in huge))
+        self.assertEqual(positions(tile(family+'_on_land_surface')),{(3344,3856)})
+        self.assertEqual(positions(tile(family+'__ruined_portal')),positions(huge))
+        for hit in (huge[0],next(f for f in all_portals if f['portalSize']=='regular')):
+            x,z=hit['x'],hit['z'];expected=hit['portalSize']=='huge'
+            confirmed=api('/api/structure',{'seed':'123','key':family,'x':x,'z':z})
+            self.assertEqual(confirmed['valid'],expected)
+            if expected:self.assertEqual(confirmed['portalTemplate'],hit['portalTemplate'])
+            def inspect(**filters):
+                return api('/api/inspect',{'seed':'123','anchor':'custom','x':x,'z':z,'features':[{'kind':'structure','key':family,'radius':32,**filters}]})
+            found=inspect(variants=variants,placements=[hit['placement']])
+            self.assertEqual(found['match'],expected)
+            if expected:self.assertEqual(found['features'][0]['portalSize'],'huge')
+            self.assertEqual(inspect(mode='exclude')['match'],not expected)
+            self.assertFalse(inspect(count=2)['match'])
+            self.assertFalse(inspect(variants=['ruined_portal_desert'])['match'])
+            self.assertFalse(inspect(placements=['partly_buried'])['match'])
+        # A giant portal must not count itself as a nearby any-size portal (or vice versa).
+        for parent,child in ((family,'ruined_portals'),('ruined_portals',family)):
+            self.assertFalse(api('/api/inspect',{'seed':'123','anchor':'custom','x':3344,'z':3856,'features':[
+                {'kind':'structure','key':parent,'radius':32,'id':'portal'},
+                {'kind':'structure','key':child,'radius':32,'near':'portal'}]})['match'])
+        self.rejected('/api/inspect',{'seed':'123','features':[{'kind':'structure','key':family,'radius':32,'placements':['in_nether']}]})
+        api('/api/start',{'seed':'123','threads':1,'limit':1,'maxMatches':10,'anchor':'custom','x':3344,'z':3856,
+            'features':[{'kind':'structure','key':family,'radius':32,'variants':variants,'placements':['on_land_surface']}]})
+        search=stopped()
+        self.assertEqual(search['tested'],1);self.assertEqual(len(search['results']),1)
+        self.assertEqual(search['results'][0]['features'][0]['portalSize'],'huge')
+
+    def test_huge_portal_subcategories_at_spawn(self):
+        # Exercise the actual spawn-search path, rather than only a custom origin near a portal.
+        seed='-2871510752493794479'
+        feature={'kind':'structure','key':'huge_ruined_portals','radius':100}
+        for filters in ({}, {'variants':['ruined_portal']}, {'placements':['on_land_surface']},
+                        {'variants':['ruined_portal'],'placements':['on_land_surface']}):
+            request={'seed':seed,'features':[{**feature,**filters}]}
+            inspected=api('/api/inspect',request)
+            self.assertTrue(inspected['match'])
+            hit=inspected['features'][0]
+            self.assertEqual((hit['x'],hit['z'],hit['placement'],hit['portalSize']),(128,16,'on_land_surface','huge'))
+            api('/api/start',{**request,'threads':1,'limit':1,'maxMatches':10,'useCatalogue':False})
+            search=stopped()
+            self.assertEqual(search['tested'],1);self.assertEqual(search['matches'],1)
+            self.assertEqual(search['results'][0]['features'],inspected['features'])
+
     def test_family_filter_catalogue_identity(self):
         from app import Engine, conditions
         engine=Engine.__new__(Engine);engine.catalog=api('/api/status')['catalog']
@@ -259,7 +313,7 @@ class SnapshotTests(unittest.TestCase):
 
     def test_structure_subcategories(self):
         catalog=api('/api/status')['catalog']
-        expected={'villages':5,'mineshafts':2,'ocean_ruins':2,'shipwrecks':2,'abandoned_camp':18,'ruined_portals':6}
+        expected={'villages':5,'mineshafts':2,'ocean_ruins':2,'shipwrecks':2,'abandoned_camp':18,'ruined_portals':6,'huge_ruined_portals':6}
         self.assertEqual({k:len(v) for k,v in catalog['structureVariants'].items()},expected)
         for family,keys in catalog['structureVariants'].items():
             def tile(key):return api('/api/structures',{'seed':'123','x':0,'z':0,'size':2048,'keys':[key]})['features']

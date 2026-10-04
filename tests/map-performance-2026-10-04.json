@@ -1,0 +1,102 @@
+{
+  "seed": "-3811937398911477122",
+  "viewportCssPixels": [
+    895,
+    852
+  ],
+  "blocksPerPixel": 3,
+  "terrainSampleStep": 8,
+  "structures": false,
+  "searchRunning": false,
+  "mapWorkers": 16,
+  "cache": "Browser HTTP cache disabled; server tile cache cleared per view; fresh client tile coordinates; warm JVM",
+  "rapidPan": "Begin loading x-20000,z-20000; move to target after 220 ms; time from final move",
+  "baseline": [
+    {
+      "x": 2000000,
+      "z": 2000000,
+      "pan": false,
+      "firstDetailedTileMs": 289.8,
+      "allDetailedTilesMs": 1259.4
+    },
+    {
+      "x": 2100000,
+      "z": 2100000,
+      "pan": false,
+      "firstDetailedTileMs": 294.1,
+      "allDetailedTilesMs": 1308.8
+    },
+    {
+      "x": 2200000,
+      "z": 2200000,
+      "pan": false,
+      "firstDetailedTileMs": 268.7,
+      "allDetailedTilesMs": 1210.1
+    },
+    {
+      "x": 2300000,
+      "z": 2300000,
+      "pan": true,
+      "firstDetailedTileMs": 288.3,
+      "allDetailedTilesMs": 1156.6
+    },
+    {
+      "x": 2400000,
+      "z": 2400000,
+      "pan": true,
+      "firstDetailedTileMs": 291.7,
+      "allDetailedTilesMs": 1201.2
+    },
+    {
+      "x": 2500000,
+      "z": 2500000,
+      "pan": true,
+      "firstDetailedTileMs": 274.5,
+      "allDetailedTilesMs": 1146.0
+    }
+  ],
+  "streaming": [
+    {
+      "x": 2000000,
+      "z": 2000000,
+      "pan": false,
+      "firstDetailedTileMs": 203.5,
+      "allDetailedTilesMs": 1233.4
+    },
+    {
+      "x": 2100000,
+      "z": 2100000,
+      "pan": false,
+      "firstDetailedTileMs": 231.4,
+      "allDetailedTilesMs": 1343.8
+    },
+    {
+      "x": 2200000,
+      "z": 2200000,
+      "pan": false,
+      "firstDetailedTileMs": 192.7,
+      "allDetailedTilesMs": 1207.9
+    },
+    {
+      "x": 2300000,
+      "z": 2300000,
+      "pan": true,
+      "firstDetailedTileMs": 206.3,
+      "allDetailedTilesMs": 1170.0
+    },
+    {
+      "x": 2400000,
+      "z": 2400000,
+      "pan": true,
+      "firstDetailedTileMs": 219.1,
+      "allDetailedTilesMs": 1207.4
+    },
+    {
+      "x": 2500000,
+      "z": 2500000,
+      "pan": true,
+      "firstDetailedTileMs": 222.4,
+      "allDetailedTilesMs": 1188.3
+    }
+  ]
+}
