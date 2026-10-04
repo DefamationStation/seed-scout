@@ -197,7 +197,7 @@ const worldMap = (() => {
   const defaultFeature = key => ({ on: true, from: (FEATURE_DEFAULTS.find(d => d[0] === key) || [key, 8])[1] });
   function features() {
     if (featureCache) return featureCache;
-    const ranked = FEATURE_DEFAULTS.map(d => d[0]), known = catalog ? catalog.sets.filter(k => !k.includes('__') && !/^(huge_)?ruined_portals_/.test(k)) : ranked;
+    const ranked = FEATURE_DEFAULTS.map(d => d[0]), known = catalog ? catalog.sets.filter(k => !k.includes('__') && !/^(huge_)?ruined_portals_/.test(k) && !catalog.dimensions?.[k]) : ranked;
     const order = [...ranked.filter(k => known.includes(k)), ...known.filter(k => !ranked.includes(k)).sort()];
     const list = order.map((key, rank) => ({ key, rank, ...defaultFeature(key), ...layers.features[key] }));
     if (catalog) featureCache = list;
@@ -590,27 +590,29 @@ const worldMap = (() => {
       // Markers on the map come from the quick generation-point check; clicking one builds the structure to confirm it.
       const [p, built] = await Promise.all([
         api('/api/point', { seed, x: location.x, z: location.z }),
-        marker?.kind === 'structure' ? api('/api/structure', { seed, key: marker.key, x: marker.x, z: marker.z }).catch(() => null) : null,
+        marker?.kind === 'structure' ? api('/api/structure', { seed, key: marker.key, x: marker.at?.x ?? marker.x, z: marker.at?.z ?? marker.z }).catch(() => null) : null,
       ]);
       if (result?.seed !== seed || token !== clickToken) return;
       const fact = (name, value) => `<div><dt>${name}</dt><dd>${value}</dd></div>`, shape = built?.valid && (built.shipBox || built.box);
       if (shape) { selection.box = shape; invalidate(); }
       const confidence = !marker ? '' : built?.valid ? built.confidence : built ? '' : marker.confidence;
       // A built structure comes with a block to stand in beside or inside it; anywhere else it is the block above the surface.
-      const stand = (built?.valid && built.stand) || { x: p.x, y: p.surfaceY + 1, z: p.z };
+      // A marker from another dimension shows that dimension's coordinates; the map position is only where its portal leads.
+      const realm = marker?.at ? marker.dimension : '', own = realm ? { x: marker.at.x, z: marker.at.z } : p;
+      const stand = (built?.valid && built.stand) || (realm ? { x: own.x, y: marker.y, z: own.z } : { x: p.x, y: p.surfaceY + 1, z: p.z });
       // The card leads with where it is and the one thing worth knowing about it; the rest is under "More".
       const biome = `<i class="swatch" style="background:${terrain.colour(p.biome)}"></i>${esc(label(p.biome))}`;
-      const setting = built?.shipwreckTemplate && built.placement ? `${esc(placementName('shipwrecks', built.placement))}${built.shipY !== undefined ? ' · predicted' : ''}` : shape && stand.where === 'inside it' ? `Buried · Y ${shape.minY} to ${shape.maxY}`
+      const setting = realm ? `In the ${REALMS[realm]}${shape ? ` · Y ${shape.minY} to ${shape.maxY}` : ''}` : built?.shipwreckTemplate && built.placement ? `${esc(placementName('shipwrecks', built.placement))}${built.shipY !== undefined ? ' · predicted' : ''}` : shape && stand.where === 'inside it' ? `Buried · Y ${shape.minY} to ${shape.maxY}`
         : p.water ? `Under water · ${p.surfaceY - p.groundY} deep` : `Ground Y ${p.groundY}`;
       let more = false;
       try { more = localStorage.getItem('seed-scout-inspector-more') === '1'; } catch { }
       box.innerHTML = `${head}
-      <p class="place"><span><b>X</b> ${p.x}</span><span><b>Y</b> ${stand.y}</span><span><b>Z</b> ${p.z}</span></p>
-      <p class="setting">${setting}<span>${biome}</span></p>
+      <p class="place"><span><b>X</b> ${own.x}</span><span><b>Y</b> ${stand.y}</span><span><b>Z</b> ${own.z}</span></p>
+      <p class="setting">${setting}<span>${realm ? 'drawn where its portal leads' : biome}</span></p>
       ${built?.valid && builtFact(built) ? `<p class="trait">${icon('check-circle')}${esc(builtFact(built))}</p>` : ''}
       ${built && !built.valid ? '<p class="notice error">The generation point is valid, but building the structure here produced no pieces.</p>' : ''}
       <div class="inspector-actions">
-        <button class="btn small" id="info-tp" title="/tp @s ${stand.x} ${stand.y} ${stand.z}">${icon('terminal')}Copy /tp</button>
+        <button class="btn small" id="info-tp" title="${realmCommand(realm, stand)}">${icon('terminal')}Copy /tp</button>
         <button class="btn small" id="info-copy">${icon('copy')}Copy X Z</button>
         ${marker?.source === 'pin' ? `<button class="btn small" id="info-unpin">${icon('x')}Remove pin</button>` : ''}
       </div>
@@ -619,26 +621,26 @@ const worldMap = (() => {
         <dl class="facts">
           ${fact('Teleport', `${stand.x} ${stand.y} ${stand.z}${stand.where ? ` <small>${esc(stand.where)}</small>` : ''}`)}
           ${stand.above ? fact('Surface above', `${stand.above.x} ${stand.above.y} ${stand.above.z} <small><button class="link" id="info-tp-above" title="The spot inside is an estimate; this one is open ground${stand.above.water ? ' (water surface)' : ''} straight above it">Copy /tp</button></small>`) : ''}
-          ${fact('Chunk', `${p.chunkX}, ${p.chunkZ}`)}
-          ${fact('Surface', `${esc(label(p.surfaceBlock || (p.water ? 'water' : 'land')))} · Y ${p.surfaceY}`)}
-          ${fact('Ground', `Y ${p.groundY}${p.water ? ' · below water' : ''}`)}
+          ${realm ? fact('Portal comes out at', `X ${p.x} · Z ${p.z} <small>in the Overworld</small>`) : fact('Chunk', `${p.chunkX}, ${p.chunkZ}`)}
+          ${realm ? '' : fact('Surface', `${esc(label(p.surfaceBlock || (p.water ? 'water' : 'land')))} · Y ${p.surfaceY}`)}
+          ${realm ? '' : fact('Ground', `Y ${p.groundY}${p.water ? ' · below water' : ''}`)}
           ${(built?.portalSize || marker?.portalSize) ? fact('Portal size', (built?.portalSize || marker.portalSize) === 'huge' ? 'Huge (giant template)' : 'Regular') : ''}
           ${(built?.shipwreckTemplate || marker?.shipwreckTemplate) ? fact('Ship template', esc(shipTemplateName(built?.shipwreckTemplate || marker.shipwreckTemplate))) : ''}
           ${(built?.placement || marker?.placement) ? fact('Placement', esc(placementName(marker?.key || built?.key, built?.placement || marker.placement))) : ''}
           ${built?.shipDeckY !== undefined ? fact('Ship / water', `Deck Y ${built.shipDeckY} · water Y ${built.waterY} <small>Keel Y ${built.shipKeelY} · ${built.groundedHullColumns} hull columns touch ground</small>`) : ''}
           ${shape ? fact('Structure', `Y ${shape.minY} to ${shape.maxY} <small>${shape.maxX - shape.minX + 1} × ${shape.maxZ - shape.minZ + 1} blocks · ${built.pieces} piece${built.pieces === 1 ? '' : 's'}</small>`) : marker ? fact(marker.kind === 'biome' ? 'Sampled at' : 'Structure Y', `Y ${marker.y}`) : ''}
-          ${fact('Nether', `X ${Math.floor(p.x / 8)} · Z ${Math.floor(p.z / 8)}`)}
-          ${fact('Slime chunk', p.slimeChunk ? '<span class="yes">Yes</span>' : 'No')}
+          ${realm ? '' : fact('Nether', `X ${Math.floor(p.x / 8)} · Z ${Math.floor(p.z / 8)}`)}
+          ${realm ? '' : fact('Slime chunk', p.slimeChunk ? '<span class="yes">Yes</span>' : 'No')}
         </dl>
         ${confidence ? `<p class="confidence">${icon('check-circle')}${esc(confidence)}</p>` : ''}
         ${built?.placementAccuracy ? `<p class="hint">${esc(built.placementAccuracy)}</p>` : ''}
-        <p class="hint">Base terrain prediction. Spawn and completed-world details may differ.</p>
+        <p class="hint">${realm ? 'The teleport spot is an estimate: the floor of the piece the structure grows from.' : 'Base terrain prediction. Spawn and completed-world details may differ.'}</p>
       </details>`;
       $('info-more').ontoggle = () => { try { localStorage.setItem('seed-scout-inspector-more', $('info-more').open ? '1' : '0'); } catch { } };
       $('info-close').onclick = closeInspector;
-      $('info-copy').onclick = () => copyText(`${p.x} ${p.z}`, 'Coordinates copied');
+      $('info-copy').onclick = () => copyText(`${own.x} ${own.z}`, 'Coordinates copied');
       if ($('info-tp-above')) $('info-tp-above').onclick = () => copyText(`/tp @s ${stand.above.x} ${stand.above.y} ${stand.above.z}`, 'Teleport command copied · surface above it');
-      $('info-tp').onclick = () => copyText(`/tp @s ${stand.x} ${stand.y} ${stand.z}`, `Teleport command copied${stand.where ? ` · ${stand.where}` : ''}`);
+      $('info-tp').onclick = () => copyText(realmCommand(realm, stand), `Teleport command copied${stand.where ? ` · ${stand.where}` : ''}`);
       if ($('info-unpin')) $('info-unpin').onclick = () => { pins.set(seed, (pins.get(seed) || []).filter(f => f.id !== marker.id)); closeInspector(); };
     } catch (e) {
       if (token === clickToken) { box.innerHTML = `${head}<p class="notice error">${esc(e.message)}</p>`; $('info-close').onclick = closeInspector; }
@@ -746,7 +748,9 @@ const worldMap = (() => {
     init();
     const fresh = result?.seed !== value.seed;
     result = value;
-    matchMarkers = value.features.map(f => ({ ...f, id: markerId(f), source: 'match', rank: -2 }));
+    // A Nether match is drawn where its portal comes out in the Overworld, eight times its own coordinates, and keeps
+    // those in `at`. The End has no place on this map.
+    matchMarkers = value.features.filter(f => f.dimension !== 'end').map(f => ({ ...f, ...(f.dimension === 'nether' ? { at: { x: f.x, z: f.z }, x: f.x * 8, z: f.z * 8 } : {}), id: markerId(f), source: 'match', rank: -2 }));
     if (fresh) { selection = null; hover = null; clickToken++; statsKey = ''; $('inspector').hidden = true; if (measure) setMeasure(false); centre = { x: value.anchorX, z: value.anchorZ }; bpp = HOME_BPP; }
     setChrome(true); $('chip-seed').textContent = value.seed;
     markersDirty = true; invalidate();

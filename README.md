@@ -122,6 +122,28 @@ tried as a faster way to skip regions and was not kept: it lost 6–13% of the p
 
 A seed search and a search inside a seed cannot run at the same time.
 
+## The Nether and the End
+
+Five structures of the other dimensions can be search conditions, under their own headings in the feature list:
+**Nether fortress**, **Bastion remnant**, **Nether fossil**, **Ruined portal (Nether)** and **End city**. Each is
+checked with that dimension's own generator from your install, the same way Overworld structures are.
+
+- **Nether distances are in Nether blocks**, measured from where a portal at the search origin leads: the
+  origin's X and Z divided by 8. "Fortress within 100" is a fortress within 100 Nether blocks of your first portal.
+- **End distances start at the centre of the End** (0, 0), where every End portal arrives. End cities begin about
+  1,000 blocks out.
+- A Nether structure can be measured from an Overworld one and the other way round, through the same portal
+  rule. An End structure can only be measured from another End structure.
+- **Bastion remnants** can be narrowed by kind (housing, hoglin stables, treasure, bridge) and **End cities** by
+  whether they have a ship. Both are read from the built structure.
+- Results give each match's coordinates in its own dimension. A Nether match is drawn on the map where its portal
+  comes out in the Overworld; its card shows the Nether coordinates and a teleport command that starts with
+  `/execute in minecraft:the_nether run`. An End match is not on the map: clicking its chip copies the teleport
+  command for it.
+- The teleport spot in these dimensions is an estimate, the floor of the piece the structure grows from.
+- Not yet: Nether and End biomes, maps of those dimensions, map layers for their structures, and using them when
+  searching inside one seed.
+
 ## Conditions on the spawn
 
 Under *Search around* in Find:

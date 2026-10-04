@@ -25,6 +25,7 @@ import net.minecraft.world.level.levelgen.*;
 import net.minecraft.world.level.levelgen.densityfunction.DensityVolume;
 import net.minecraft.world.level.levelgen.densityfunction.SamplerContext;
 import net.minecraft.util.context.ContextMap;
+import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
 import net.minecraft.world.level.levelgen.structure.*;
 import net.minecraft.world.level.levelgen.structure.placement.*;
@@ -33,6 +34,7 @@ import net.minecraft.world.level.levelgen.structure.structures.StrongholdPieces;
 import net.minecraft.world.level.levelgen.structure.structures.StrongholdStructure;
 import net.minecraft.world.level.levelgen.structure.structures.RuinedPortalPiece;
 import net.minecraft.world.level.levelgen.structure.structures.ShipwreckPieces;
+import net.minecraft.world.level.levelgen.structure.pools.*;
 import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceSerializationContext;
 import net.minecraft.world.level.levelgen.structure.templatesystem.*;
 import net.minecraft.world.level.storage.LevelStorageSource;
@@ -51,6 +53,32 @@ public final class SeedEngine {
     static final Map<String,List<String>> structureVariants=new TreeMap<>();
     static final Map<String,List<String>> structureTemplates=new TreeMap<>();
     static LevelHeightAccessor heights;
+    // `generator` and `heights` above are the Overworld's, which nearly everything here works in. A structure of
+    // another dimension is checked with that dimension's generator, in that dimension's own coordinates.
+    record Dim(String name,ResourceKey<Level> level,NoiseBasedChunkGenerator generator,LevelHeightAccessor heights) {}
+    static Dim OVERWORLD,NETHER,END;
+    static final Map<String,Dim> dimensions=new TreeMap<>();
+    static Dim dimOf(String key) { return dimensions.getOrDefault(key,OVERWORLD); }
+    static Dim dimOf(Feature f) { return f.kind.equals("structure")?dimOf(f.key):OVERWORLD; }
+    // A seed's noise and structure placement in another dimension. Made only when a condition asks for it.
+    record Realm(RandomState state,ChunkGeneratorStructureState structures) {}
+    static final ThreadLocal<Map<String,Realm>> REALMS=ThreadLocal.withInitial(()->new LinkedHashMap<>(8,.75f,true){protected boolean removeEldestEntry(Map.Entry<String,Realm> e){return size()>6;}});
+    static Realm realm(Dim dim,long seed) {
+        return REALMS.get().computeIfAbsent(dim.name+seed,k->{
+            var state=RandomState.create(access.lookupOrThrow(Registries.NOISE),seed,dim.generator.generatorSettings().value());
+            return new Realm(state,ChunkGeneratorStructureState.createForNormal(state,seed,dim.generator.getOrigin(state),dim.generator.getBiomeSource(),access.lookupOrThrow(Registries.STRUCTURE_SET)));
+        });
+    }
+    // The position a condition in dimension `to` is measured from, given a position in dimension `from`: the place a
+    // portal leads to between the Overworld and the Nether (one Nether block is eight Overworld blocks), and the
+    // centre of the End, where every End portal arrives.
+    static int[] frame(Dim from,Dim to,int x,int z) {
+        if(from==to)return new int[]{x,z};
+        if(to==END)return new int[]{0,0};
+        if(to==NETHER)return new int[]{Math.floorDiv(x,8),Math.floorDiv(z,8)};
+        return from==NETHER?new int[]{x*8,z*8}:new int[]{x,z};
+    }
+    static void register(String key,Holder.Reference<StructureSet> holder,String detail,Dim dim) { sets.put(key,holder);dimensions.put(key,dim);if(detail!=null)variantDetails.put(key,detail); }
     static volatile Job active;
     static final ScheduledExecutorService PROGRESS=Executors.newSingleThreadScheduledExecutor(r->{var t=new Thread(r,"search-progress");t.setDaemon(true);return t;});
     static final Map<String,String> biomeNames=new TreeMap<>();
@@ -84,6 +112,11 @@ public final class SeedEngine {
         access=new RegistryAccess.ImmutableRegistryAccess(registryList).freeze();
         generator=(NoiseBasedChunkGenerator)access.lookupOrThrow(Registries.WORLD_PRESET).getOrThrow(WorldPresets.NORMAL).value().overworld().orElseThrow().generator();
         heights=LevelHeightAccessor.create(generator.getMinY(),generator.getGenDepth());
+        var stems=access.lookupOrThrow(Registries.WORLD_PRESET).getOrThrow(WorldPresets.NORMAL).value().createWorldDimensions();
+        OVERWORLD=new Dim("overworld",Level.OVERWORLD,generator,heights);
+        var nether=(NoiseBasedChunkGenerator)stems.get(LevelStem.NETHER).orElseThrow().generator();var end=(NoiseBasedChunkGenerator)stems.get(LevelStem.END).orElseThrow().generator();
+        NETHER=new Dim("nether",Level.NETHER,nether,LevelHeightAccessor.create(nether.getMinY(),nether.getGenDepth()));
+        END=new Dim("end",Level.END,end,LevelHeightAccessor.create(end.getMinY(),end.getGenDepth()));
         var scratch=LevelStorageSource.createDefault(Path.of("runtime/template-storage")).createAccess("template-reader");
         templates=new StructureTemplateManager(resources,scratch,DataFixers.getDataFixer(),access.lookupOrThrow(Registries.BLOCK));
         pieceContext=new StructurePieceSerializationContext(resources,access,templates);
@@ -107,9 +140,20 @@ public final class SeedEngine {
         structureTemplates.put("villages",List.of("inhabited","abandoned"));
         structureTemplates.put("ocean_ruins",List.of("single","cluster"));
         structureTemplates.put("igloos",List.of("basement","no_basement"));
+        // The other dimensions. A fortress and a bastion share one set, as the game places one or the other at each
+        // of its positions; the Nether's ruined portal is the Overworld set's sixth structure.
+        var every=new HashMap<String,Holder.Reference<StructureSet>>();access.lookupOrThrow(Registries.STRUCTURE_SET).listElements().forEach(h->every.put(h.key().identifier().getPath(),h));
+        register("fortresses",every.get("nether_complexes"),"fortress",NETHER);
+        register("bastion_remnants",every.get("nether_complexes"),"bastion_remnant",NETHER);
+        register("nether_fossils",every.get("nether_fossils"),null,NETHER);
+        register("nether_ruined_portals",every.get("ruined_portals"),"ruined_portal_nether",NETHER);
+        register("end_cities",every.get("end_cities"),null,END);
+        structureTemplates.put("bastion_remnants",List.of("housing","stables","treasure","bridge"));
+        structureTemplates.put("end_cities",List.of("ship","no_ship"));
         generator.getBiomeSource().possibleBiomes().forEach(h->h.unwrapKey().ifPresent(k->biomeNames.put(k.identifier().getPath(),k.identifier().toString())));
         var ready=new LinkedHashMap<String,Object>(Map.of("type","ready","version",SharedConstants.getCurrentVersion().id(),"sets",sets.keySet(),"biomes",biomeNames.keySet(),"cores",CORES,"mapWorkers",MAP_THREADS,"structureVariants",structureVariants,"variantDetails",variantDetails,"structureTemplates",structureTemplates));
-        ready.put("structurePlacements",Map.of("shipwrecks",ShipwreckPlacement.OPTIONS));emit(ready);
+        ready.put("structurePlacements",Map.of("shipwrecks",ShipwreckPlacement.OPTIONS));
+        var named=new TreeMap<String,String>();dimensions.forEach((key,dim)->named.put(key,dim.name));ready.put("dimensions",named);emit(ready);
     }
     public static void main(String[] args) throws Exception {
         initialize();
@@ -243,7 +287,8 @@ public final class SeedEngine {
         var structState=mapStructures(seed);var state=structState.randomState();
         var found=new ArrayList<Map<String,Object>>();
         for(var f:parseFeatures(r.getAsJsonArray("features"))) {
-            if(f.kind.equals("structure"))findStructures(f,seed,state,structState,x,z,null,found,500-found.size(),true,null);
+            var at=frame(OVERWORLD,dimOf(f),x,z);
+            if(f.kind.equals("structure"))findStructures(f,seed,state,structState,at[0],at[1],null,found,500-found.size(),true,null);
             else {var b=findBiome(f,seed,state,x,z,null,"terrain");if(b!=null)found.add(b);}
             if(found.size()>=500)break;
         }
@@ -254,22 +299,24 @@ public final class SeedEngine {
     // Every structure whose locate position lies in the half-open block square [x,x+size) x [z,z+size), by generation point only.
     static Object structures(JsonObject r) {
         long seed=Long.parseLong(r.get("seed").getAsString());int x=r.get("x").getAsInt(),z=r.get("z").getAsInt(),size=r.get("size").getAsInt();
-        var structState=mapStructures(seed);var state=structState.randomState();var climate=state.createClimateSampler(SamplerContext.EMPTY_UNCACHED);
         var found=new ArrayList<Map<String,Object>>();var limited=new ArrayList<String>();
         for(var item:r.getAsJsonArray("keys")) {
-            String key=item.getAsString();var set=set(key);var placement=set.placement();var offset=placement.locateOffset();int count=0;
+            String key=item.getAsString();var dim=dimOf(key);
+            var structState=dim==OVERWORLD?mapStructures(seed):realm(dim,seed).structures;var state=structState.randomState();var climate=state.createClimateSampler(SamplerContext.EMPTY_UNCACHED);
+            var set=set(key);var placement=set.placement();var offset=placement.locateOffset();int count=0;
             // The locate position is the chunk corner plus the placement's offset, so the chunk range is shifted by that offset.
             var candidates=candidates(placement,seed,structState,Math.ceilDiv(x-offset.getX(),16),Math.floorDiv(x+size-1-offset.getX(),16),Math.ceilDiv(z-offset.getZ(),16),Math.floorDiv(z+size-1-offset.getZ(),16)).iterator();
             while(candidates.hasNext()) {
                 var c=candidates.next();var pos=placement.getLocatePos(c);
                 if(pos.getX()<x||pos.getX()>=x+size||pos.getZ()<z||pos.getZ()>=z+size)continue;
-                var hit=startAt(set,seed,state,structState,climate,c,set==set("ruined_portals")||set==set("shipwrecks"));
+                var hit=startAt(dim,set,seed,state,structState,climate,c,set==set("ruined_portals")||set==set("shipwrecks"));
                 if(hit==null||!portalMatches(key,hit,set,seed,state,structState,climate,c))continue;
                 // Only a match beyond the cap proves the list is incomplete.
                 if(++count>TILE_CAP){limited.add(key);break;}
                 var marker=new HashMap<String,Object>(Map.of("kind","structure","key",key,"detail",hit.detail(),"x",pos.getX(),"y",hit.y,"z",pos.getZ(),"confidence","Snapshot generation point confirmed"));
                 if(set==set("ruined_portals"))portalFacts(marker,hit);
                 if(set==set("shipwrecks"))marker.put("shipwreckTemplate",shipwreckTemplate(hit));
+                if(dim!=OVERWORLD)marker.put("dimension",dim.name);
                 found.add(marker);
             }
         }
@@ -279,8 +326,8 @@ public final class SeedEngine {
     static Object structure(JsonObject r) {
         long seed=Long.parseLong(r.get("seed").getAsString());int x=r.get("x").getAsInt(),z=r.get("z").getAsInt();String key=r.get("key").getAsString();
         var set=set(key);var offset=set.placement().locateOffset();int bx=x-offset.getX(),bz=z-offset.getZ();
-        var structState=mapStructures(seed);var state=structState.randomState();
-        var hit=(bx&15)!=0||(bz&15)!=0?null:startAt(set,seed,state,structState,state.createClimateSampler(SamplerContext.EMPTY_UNCACHED),new ChunkPos(bx>>4,bz>>4),true);
+        var dim=dimOf(key);var structState=dim==OVERWORLD?mapStructures(seed):realm(dim,seed).structures;var state=structState.randomState();
+        var hit=(bx&15)!=0||(bz&15)!=0?null:startAt(dim,set,seed,state,structState,state.createClimateSampler(SamplerContext.EMPTY_UNCACHED),new ChunkPos(bx>>4,bz>>4),true);
         if(hit==null||!portalMatches(key,hit,set,seed,state,structState,state.createClimateSampler(SamplerContext.EMPTY_UNCACHED),new ChunkPos(bx>>4,bz>>4)))return Map.of("valid",false);
         var box=hit.start.getBoundingBox();
         var result=new LinkedHashMap<String,Object>(Map.of("valid",true,"kind","structure","key",key,"detail",hit.detail(),"x",x,"y",hit.y,"z",z,"confidence","Snapshot structure start confirmed",
@@ -288,7 +335,8 @@ public final class SeedEngine {
         if(set==set("ruined_portals"))portalFacts(result,hit);
         if(set==set("shipwrecks")){result.put("shipwreckTemplate",shipwreckTemplate(hit));result.putAll(ShipwreckPlacement.facts(hit,state));}
         builtFacts(result,hit,set);
-        var standing=stand(hit,state);
+        if(dim!=OVERWORLD)result.put("dimension",dim.name);
+        var standing=dim==OVERWORLD?stand(hit,state):standInside(hit);
         if(result.containsKey("shipDeckY")&&List.of("afloat","surface").contains(result.get("placement"))) {
             var aboveWater=new LinkedHashMap<String,Object>(standing);
             aboveWater.put("y",Math.max(((Number)standing.get("y")).intValue(),((Number)result.get("shipDeckY")).intValue()+1));
@@ -296,6 +344,14 @@ public final class SeedEngine {
         }
         result.put("stand",standing);
         return result;
+    }
+    // In the Nether and the End there is no surface to stand beside a structure on: the spot is on the floor of the
+    // piece the structure grows from (a fortress crossing, a bastion's first hall, an end city's base).
+    static Map<String,Object> standInside(Start hit) {
+        var piece=hit.start.getPieces().get(0);var inner=piece.getBoundingBox();
+        // A fortress grows from a bridge crossing: its deck is four blocks up, with open air over lava below it.
+        int floor=inner.minY()+(piece instanceof PoolElementStructurePiece pool?pool.getGroundLevelDelta():piece.getClass().getName().contains("NetherFortressPieces")?5:1);
+        return Map.of("x",(inner.minX()+inner.maxX())>>1,"y",Math.min(floor,inner.maxY()),"z",(inner.minZ()+inner.maxZ())>>1,"where","inside it (estimate)");
     }
     // Where to teleport to for a built structure: an open block to stand in, beside it or inside it.
     // Only base terrain and the pieces' boxes are known here, not the placed blocks, so this is a best estimate.
@@ -427,7 +483,8 @@ public final class SeedEngine {
             for(var feature:options) {
                 if(job!=null && !job.running.get())return null;
                 var matches=new ArrayList<Map<String,Object>>();int taken=0;
-                if(feature.kind.equals("structure"))taken=findStructures(feature,seed,state,structState,x,z,job,matches,feature.count,false,companions(feature,parsed,seed,state,structState,job,biomeMode));
+                var at=frame(OVERWORLD,dimOf(feature),x,z);
+                if(feature.kind.equals("structure"))taken=findStructures(feature,seed,state,structState,at[0],at[1],job,matches,feature.count,false,companions(feature,parsed,seed,state,structState,job,biomeMode));
                 else {var b=findBiome(feature,seed,state,x,z,job,biomeMode);if(b!=null){matches.add(b);taken=1;}}
                 if(feature.exclude?taken>0:taken<feature.count)continue;
                 // An excluded feature has nothing to report.
@@ -442,21 +499,25 @@ public final class SeedEngine {
             if(!feature.kind.equals("structure")||feature.exclude||parsed.get(i).near!=null)continue;
             if(job!=null && !job.running.get())return null;
             var matches=new ArrayList<Map<String,Object>>();
-            if(findStructures(feature,seed,state,structState,x,z,job,matches,feature.count,true,companions(feature,parsed,seed,state,structState,job,biomeMode))<feature.count)return null;
+            var at=frame(OVERWORLD,dimOf(feature),x,z);
+            if(findStructures(feature,seed,state,structState,at[0],at[1],job,matches,feature.count,true,companions(feature,parsed,seed,state,structState,job,biomeMode))<feature.count)return null;
             groups.set(i,matches);
         }
         var found=new ArrayList<Map<String,Object>>();groups.forEach(found::addAll);
         int cluster=request.has("cluster")?request.get("cluster").getAsInt():0;
         // This tests the selected nearest matches; it does not exhaust all alternative clusters.
+        // Nether matches count at the Overworld position their portal leads to; the End has no such position.
+        java.util.function.ToIntBiFunction<Map<String,Object>,String> across=(m,axis)->((Number)m.get(axis)).intValue()*("nether".equals(m.get("dimension"))?8:1);
         if(cluster>0)for(var a:found)for(var b:found) {
-            if(Math.hypot(((Number)a.get("x")).intValue()-((Number)b.get("x")).intValue(),((Number)a.get("z")).intValue()-((Number)b.get("z")).intValue())>cluster)return null;
+            if("end".equals(a.get("dimension"))||"end".equals(b.get("dimension")))continue;
+            if(Math.hypot(across.applyAsInt(a,"x")-across.applyAsInt(b,"x"),across.applyAsInt(a,"z")-across.applyAsInt(b,"z"))>cluster)return null;
         }
         return found;
     }
     // Gate on one necessary positive root condition. Never prune on exclusions,
     // dependent conditions, biome samples, or unsupported placement types.
     static Feature spawnGate(List<Feature> features) {
-        return features.stream().filter(f->f.kind.equals("structure") && !f.exclude && f.near==null && f.or.isEmpty() && f.radius<=256)
+        return features.stream().filter(f->f.kind.equals("structure") && dimOf(f)==OVERWORLD && !f.exclude && f.near==null && f.or.isEmpty() && f.radius<=256)
             .filter(f->set(f.key).placement() instanceof RandomSpreadStructurePlacement p && p.spacing()>=32)
             .min(Comparator.comparingDouble(f->(double)f.radius/((RandomSpreadStructurePlacement)set(f.key).placement()).spacing())).orElse(null);
     }
@@ -479,7 +540,7 @@ public final class SeedEngine {
         boolean huge=key.equals("huge_ruined_portals")||key.startsWith("huge_ruined_portals_");
         String family=huge?"huge_ruined_portals":"ruined_portals";
         if(huge||key.startsWith("ruined_portals_")&&!variantDetails.containsKey(key)) {
-            if(hit.start==null)hit=startAt(set,seed,state,structState,climate,chunk,true);
+            if(hit.start==null)hit=startAt(dimOf(key),set,seed,state,structState,climate,chunk,true);
             if(hit==null||huge&&!hugePortal(hit))return false;
         }
         if(variantDetails.containsKey(key))return variantDetails.get(key).equals(hit.detail());
@@ -506,7 +567,18 @@ public final class SeedEngine {
         if(set==set("villages"))return zombieVillage(hit)?"abandoned":"inhabited";
         if(set==set("igloos"))return hit.start.getPieces().size()>1?"basement":"no_basement";
         if(set==set("ocean_ruins"))return ruinCount(hit)>1?"cluster":"single";
+        if(set==set("bastion_remnants"))return bastionKind(hit);
+        if(set==set("end_cities"))return endShip(hit)?"ship":"no_ship";
         return shipwreckTemplate(hit);
+    }
+    // A bastion is one of four kinds, chosen with its first piece. An end city has a ship or not, as one of its pieces.
+    static String bastionKind(Start hit) {
+        String first=hit.start.getPieces().get(0) instanceof PoolElementStructurePiece piece?piece.getElement().toString():"";
+        return first.contains("bastion/units/")?"housing":first.contains("bastion/hoglin_stable/")?"stables":first.contains("bastion/treasure/")?"treasure":first.contains("bastion/bridge/")?"bridge":"";
+    }
+    static boolean endShip(Start hit) {
+        for(var piece:hit.start.getPieces())if(piece instanceof TemplateStructurePiece&&piece.createTag(pieceContext).getStringOr("Template","").endsWith("ship"))return true;
+        return false;
     }
     static void builtFacts(Map<String,Object> result,Start hit,StructureSet set) {
         if(hit.start==null)return;
@@ -515,6 +587,8 @@ public final class SeedEngine {
         else if(set==set("igloos"))result.put("basement",pieces.size()>1);
         // A cold ruin is three overlaid pieces (stone brick, cracked, mossy); a warm one is a single piece.
         else if(set==set("ocean_ruins"))result.put("ruins",ruinCount(hit));
+        else if(set==set("bastion_remnants")&&hit.detail().equals("bastion_remnant"))result.put("bastion",bastionKind(hit));
+        else if(set==set("end_cities"))result.put("ship",endShip(hit));
     }
     static void portalFacts(Map<String,Object> result,Start hit) {
         var tag=portalTag(hit);String template=Identifier.parse(tag.getStringOr("Template","")).getPath();
@@ -541,7 +615,9 @@ public final class SeedEngine {
     }
     // The game's weighted choice among a set's structures for one chunk. confirm=false stops at a valid generation point
     // (y is that point's); confirm=true also builds the start and requires pieces (y is the bounding box minimum).
-    static Start startAt(StructureSet set,long seed,RandomState state,ChunkGeneratorStructureState structState,Climate.Sampler climate,ChunkPos c,boolean confirm) {
+    static Start startAt(StructureSet set,long seed,RandomState state,ChunkGeneratorStructureState structState,Climate.Sampler climate,ChunkPos c,boolean confirm) { return startAt(OVERWORLD,set,seed,state,structState,climate,c,confirm); }
+    // state, structState and climate must be the given dimension's.
+    static Start startAt(Dim dim,StructureSet set,long seed,RandomState state,ChunkGeneratorStructureState structState,Climate.Sampler climate,ChunkPos c,boolean confirm) {
         if(!set.placement().isStructureChunk(structState,c.x(),c.z()))return null;
         var entries=new ArrayList<>(set.structures());
         var random=new WorldgenRandom(new LegacyRandomSource(0));random.setLargeFeatureSeed(seed,c.x(),c.z());
@@ -550,7 +626,7 @@ public final class SeedEngine {
             int pick=entries.size()==1?0:random.nextInt(total),index=0;
             if(entries.size()>1)for(;index<entries.size()-1;index++){pick-=entries.get(index).weight();if(pick<0)break;}
             var entry=entries.remove(index);total-=entry.weight();var structure=entry.structure().value();
-            var context=new Structure.GenerationContext(access,generator,generator.getBiomeSource(),climate,state,templates,seed,c,heights,structure.biomes()::contains);
+            var context=new Structure.GenerationContext(access,dim.generator,dim.generator.getBiomeSource(),climate,state,templates,seed,c,dim.heights,structure.biomes()::contains);
             if(structure instanceof OceanMonumentStructure&&!monumentPossible(context))continue;
             var point=structure.findValidGenerationPoint(context);
             if(point.isEmpty())continue;
@@ -558,7 +634,7 @@ public final class SeedEngine {
             StructureStart start;
             // The game assembles stronghold pieces through static fields of StrongholdPieces, so only one thread may build
             // a stronghold at a time; every other structure locks nothing shared.
-            synchronized(structure instanceof StrongholdStructure?StrongholdPieces.class:context) { start=structure.generate(entry.structure(),Level.OVERWORLD,access,generator,generator.getBiomeSource(),climate,state,templates,seed,c,0,heights,structure.biomes()::contains); }
+            synchronized(structure instanceof StrongholdStructure?StrongholdPieces.class:context) { start=structure.generate(entry.structure(),dim.level,access,dim.generator,dim.generator.getBiomeSource(),climate,state,templates,seed,c,0,dim.heights,structure.biomes()::contains); }
             if(start.isValid())return new Start(entry.structure(),start.getBoundingBox().minY(),start);
         }
         return null;
@@ -582,8 +658,9 @@ public final class SeedEngine {
                 var matches=new ArrayList<Map<String,Object>>();
                 // A condition on the parent's own type must not count the parent itself.
                 boolean same=d.kind.equals("structure")&&set(d.key)==set(parent.key);
-                if(d.kind.equals("structure"))findStructures(d,seed,state,structState,pos.getX(),pos.getZ(),job,matches,d.count+(same?1:0),confirm&&!d.exclude,null);
-                else {var b=findBiome(d,seed,state,pos.getX(),pos.getZ(),job,biomeMode);if(b!=null)matches.add(b);}
+                var at=frame(dimOf(parent),dimOf(d),pos.getX(),pos.getZ());
+                if(d.kind.equals("structure"))findStructures(d,seed,state,structState,at[0],at[1],job,matches,d.count+(same?1:0),confirm&&!d.exclude,null);
+                else {var b=findBiome(d,seed,state,at[0],at[1],job,biomeMode);if(b!=null)matches.add(b);}
                 if(same)matches.removeIf(m->((Number)m.get("x")).intValue()==pos.getX()&&((Number)m.get("z")).intValue()==pos.getZ());
                 if(d.exclude?!matches.isEmpty():matches.size()<d.count)return null;
                 if(!d.exclude)for(var m:matches.subList(0,d.count)){var linked=new LinkedHashMap<>(m);linked.put("near",Map.of("key",parent.key,"x",pos.getX(),"z",pos.getZ()));reported.add(linked);}
@@ -597,6 +674,9 @@ public final class SeedEngine {
     static final ThreadLocal<int[]> ONLY_INSIDE=new ThreadLocal<>();
     static int findStructures(Feature f,long seed,RandomState state,ChunkGeneratorStructureState structState,int x,int z,Job job,List<Map<String,Object>> out,int limit,boolean confirm,BiFunction<BlockPos,Boolean,List<Map<String,Object>>> companions) {
         var set=set(f.key); var placement=set.placement();
+        // x and z are in the structure's own dimension; so are the positions reported.
+        var dim=dimOf(f.key);
+        if(dim!=OVERWORLD){var realm=realm(dim,seed);state=realm.state;structState=realm.structures;}
         int minX=Math.floorDiv(x-f.radius-32,16),maxX=Math.floorDiv(x+f.radius+32,16),minZ=Math.floorDiv(z-f.radius-32,16),maxZ=Math.floorDiv(z+f.radius+32,16);
         ToDoubleFunction<ChunkPos> distance=c->Math.hypot(placement.getLocatePos(c).getX()-x,placement.getLocatePos(c).getZ()-z);
         int[] box=ONLY_INSIDE.get();
@@ -606,16 +686,16 @@ public final class SeedEngine {
         int taken=0;
         for(var c:candidates) {
             if(taken>=limit||job!=null && !job.running.get())return taken;
-            var hit=startAt(set,seed,state,structState,climate,c,confirm&&companions==null);
+            var hit=startAt(dim,set,seed,state,structState,climate,c,confirm&&companions==null);
             // Subcategories are alternatives within a family. Both filters apply to this same start.
             if(hit==null||!f.variants.isEmpty()&&!f.variants.contains(hit.detail()))continue;
             if(!f.templates.isEmpty()) {
-                if(hit.start==null)hit=startAt(set,seed,state,structState,climate,c,true);
+                if(hit.start==null)hit=startAt(dim,set,seed,state,structState,climate,c,true);
                 if(hit==null||!f.templates.contains(templateOf(set,hit)))continue;
             }
             Map<String,Object> shipPlacement=null;
             if(!f.placements.isEmpty()) {
-                if(hit.start==null)hit=startAt(set,seed,state,structState,climate,c,true);
+                if(hit.start==null)hit=startAt(dim,set,seed,state,structState,climate,c,true);
                 if(hit==null)continue;
                 String placementName;
                 if(set==set("shipwrecks")){shipPlacement=ShipwreckPlacement.facts(hit,state);placementName=(String)shipPlacement.get("placement");}
@@ -628,13 +708,14 @@ public final class SeedEngine {
             if(companions!=null) {
                 // Cheap checks around the match come before anything is built.
                 if((extra=companions.apply(pos,false))==null)continue;
-                if(confirm&&((hit=startAt(set,seed,state,structState,climate,c,true))==null||(extra=companions.apply(pos,true))==null))continue;
+                if(confirm&&((hit=startAt(dim,set,seed,state,structState,climate,c,true))==null||(extra=companions.apply(pos,true))==null))continue;
             }
             var match=new LinkedHashMap<>(found(f,new BlockPos(pos.getX(),hit.y,pos.getZ()),x,z,hit.detail(),confirm?"Snapshot structure start confirmed":"Snapshot generation point confirmed"));
             if(hit.start!=null&&set==set("ruined_portals"))portalFacts(match,hit);
             if(hit.start!=null&&set==set("shipwrecks"))match.put("shipwreckTemplate",shipwreckTemplate(hit));
             if(shipPlacement!=null)match.putAll(shipPlacement);
             builtFacts(match,hit,set);
+            if(dim!=OVERWORLD)match.put("dimension",dim.name);
             out.add(match);
             out.addAll(extra);taken++;
         }
@@ -712,6 +793,7 @@ public final class SeedEngine {
         WorldJob(JsonObject r) {
             request=r;id=r.get("id").getAsLong();seed=Long.parseLong(r.get("seed").getAsString());threads=r.get("threads").getAsInt();maxMatches=r.get("maxMatches").getAsInt();range=r.get("range").getAsInt();
             var parsed=parseFeatures(r.getAsJsonArray("features"));
+            if(parsed.stream().anyMatch(f->dimOf(f)!=OVERWORLD||f.or.stream().anyMatch(o->dimOf(o)!=OVERWORLD)))throw new IllegalArgumentException("Searching inside one seed covers the Overworld only. Nether and End structures can be used when searching many seeds.");
             // The anchor is the condition with the fewest candidates: ring structures (128 strongholds in a world), then the widest spacing.
             var roots=parsed.stream().filter(f->!f.exclude&&f.near==null&&f.or.isEmpty()).toList();
             ToDoubleFunction<Feature> rarity=f->set(f.key).placement() instanceof RandomSpreadStructurePlacement spread?spread.spacing():set(f.key).placement() instanceof ConcentricRingsStructurePlacement?1e9:1;

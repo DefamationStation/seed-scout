@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Seed Scout stands after 0.1.16 and what comes next. The plan is short on purpose: a few target wins, in
+Where Seed Scout stands after 0.1.20 and what comes next. The plan is short on purpose: a few target wins, in
 order, each with what "done" looks like.
 
 ## Shipped so far
@@ -21,6 +21,9 @@ order, each with what "done" looks like.
 | 0.1.14 | Conditions on the spawn itself (spawn biome, either/or alternatives, slime chunks near the origin); a self-test that drives every desktop dialog, run as a smoke test before each release |
 | 0.1.15 | Search inside one seed: every place where the conditions hold, nearest first, out to the world border; stop, keep searching later, progress kept across restarts |
 | 0.1.16 | Groups of one structure in the in-seed search ("3 ancient cities within 2,000 blocks"); biome searches two to five times faster with the same matches |
+| 0.1.17 – 0.1.18 | Built-in condition presets removed; Electron 44, pinned build inputs, only the two newest releases kept |
+| 0.1.19 | The spawn point as the game stores it; a tidier chooser for structure types |
+| 0.1.20 | Nether and End structures as search conditions: fortress, bastion remnant (by kind), nether fossil, Nether ruined portal, end city (with or without ship) |
 
 Before that: the seed search itself, the terrain map with relief and contours, structure layers, saved seeds
 and the rare-find catalogue.
@@ -48,10 +51,18 @@ What is left to try, each a larger piece of work:
 - **Many seeds, anywhere in each:** the two modes are separate. "Seeds that have this group within 5,000
   blocks of spawn" is the natural combination.
 
+### 2. The other dimensions
+
+Stage 1, structures as search conditions, shipped in 0.1.20. What follows, in order:
+
+- **Biomes as conditions:** Nether biomes near where the portal leads ("warped forest within 100 blocks").
+- **Maps:** a dimension switch on the map. The Nether as a biome map at one height with its structures; the End
+  with its islands and cities; Nether structures as an optional overlay on the Overworld map.
+- **Inside one seed:** Nether and End conditions in the in-seed search.
+- **Checked in the game:** positions compared with `/locate` in a real world, and the teleport spots visited.
+
 ## Later
 
-- **Nether:** fortresses and bastions as map layers at their overworld-equivalent position and as search
-  conditions; a Nether biome map after that.
 - **Legend that points:** click a biome in the legend to highlight it on the map and jump to its nearest patch.
 - **Height profile:** the measure tool shows the terrain profile along its line.
 - **Map image export:** save the current view as a PNG with the markers and scale bar.

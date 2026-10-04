@@ -215,6 +215,8 @@ class Engine:
         else:
             if not str(request.get('seed','')).strip(): raise ValueError('Enter the seed to search inside.')
             wanted=self.validate(copy.deepcopy(request));places=[];ring=0;base=dict(baseSeconds=0,baseRegions=0,covered=0)
+            if any(c['kind']=='structure' and c['key'] in self.catalog.get('dimensions',{}) for f in wanted['features'] for c in [f,*f.get('or',[])]):
+                raise ValueError('Searching inside one seed covers the Overworld only. Nether and End structures can be used when searching many seeds.')
             # Spawn conditions describe a seed, not a place in it.
             for key in ('spawnBiomes','spawnBiomeMode','slime','resume'): wanted.pop(key,None)
             if not any(f['mode']=='within' and not f.get('near') and not f.get('or') for f in wanted['features']):
@@ -345,6 +347,9 @@ class Engine:
             parent=ids.get(f['near'])
             if parent is None or parent is f or parent['kind']!='structure' or parent['mode']!='within' or parent.get('near'):
                 raise ValueError('A condition can only be measured from a structure you want nearby that is itself measured from the search origin.')
+            # The Overworld and the Nether are linked by portals; nothing in the End has a position in either.
+            realm=lambda c: self.catalog.get('dimensions',{}).get(c['key'],'') if c['kind']=='structure' else ''
+            if (realm(f)=='end')!=(realm(parent)=='end'): raise ValueError('An End structure can only be measured from another End structure.')
         # "or": other structures or biomes that satisfy the same condition at the same distances.
         parents={f['near'] for f in features if f.get('near')}
         for f in features:

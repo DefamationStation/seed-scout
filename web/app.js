@@ -72,6 +72,8 @@ const GROUPS = {
   ocean: { name: 'Ocean', colour: '#62c8ea' },
   biome: { name: 'Biome match', colour: '#8fdc9a' },
   other: { name: 'Other structures', colour: '#d6dde0' },
+  nether: { name: 'Nether', colour: '#e8675a' },
+  end: { name: 'The End', colour: '#d8c7f2' },
 };
 const STRUCTURES = {
   villages: ['Village', 'village', 'settlement'], pillager_outposts: ['Pillager outpost', 'outpost', 'settlement'],
@@ -90,9 +92,12 @@ const STRUCTURES = {
   strongholds: ['Stronghold', 'castle', 'underground'], trial_chambers: ['Trial chamber', 'key', 'underground'],
   ocean_monuments: ['Ocean monument', 'eye', 'ocean'], ocean_ruins: ['Ocean ruins', 'column', 'ocean'],
   shipwrecks: ['Shipwreck', 'ship', 'ocean'], buried_treasures: ['Buried treasure', 'chest', 'ocean'],
+  fortresses: ['Nether fortress', 'castle', 'nether'], bastion_remnants: ['Bastion remnant', 'outpost', 'nether'],
+  nether_fossils: ['Nether fossil', 'urn', 'nether'], nether_ruined_portals: ['Ruined portal (Nether)', 'portal', 'nether'],
+  end_cities: ['End city', 'city', 'end'],
 };
 const label = key => STRUCTURES[key]?.[0] || String(key).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
-const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks', 'abandoned_camp', 'igloos', 'ruined_portals', 'huge_ruined_portals'];
+const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks', 'abandoned_camp', 'igloos', 'ruined_portals', 'huge_ruined_portals', 'bastion_remnants', 'end_cities'];
 const PORTAL_FAMILIES = ['ruined_portals', 'huge_ruined_portals'];
 const isPortalFamily = family => PORTAL_FAMILIES.includes(family);
 const PORTAL_PLACEMENTS = ['on_land_surface', 'partly_buried', 'on_ocean_floor', 'in_mountain', 'underground'];
@@ -106,9 +111,10 @@ function shipTemplateName(template) {
   return `${shape} · ${orientation} · ${degraded ? 'Degraded' : 'Non-degraded'}`;
 }
 // Shipwreck templates are template files. For the other families the engine reads a trait from the built structure.
-const TRAITS = { inhabited: 'Inhabited', abandoned: 'Abandoned (zombie)', single: 'Single ruin', cluster: 'Cluster of ruins', basement: 'With basement', no_basement: 'No basement' };
+const TRAITS = { inhabited: 'Inhabited', abandoned: 'Abandoned (zombie)', single: 'Single ruin', cluster: 'Cluster of ruins', basement: 'With basement', no_basement: 'No basement',
+  housing: 'Housing', stables: 'Hoglin stables', treasure: 'Treasure', bridge: 'Bridge', ship: 'With ship', no_ship: 'No ship' };
 const templateName = (family, template) => family === 'shipwrecks' ? shipTemplateName(template) : TRAITS[template] || label(template);
-const familyName = key => ({ igloos: 'Igloos', villages: 'Villages', mineshafts: 'Mineshafts', ocean_ruins: 'Ocean ruins', shipwrecks: 'Shipwrecks', abandoned_camp: 'Abandoned camps', ruined_portals: 'Ruined portals (any size)', huge_ruined_portals: 'Huge ruined portals' })[key] || label(key);
+const familyName = key => ({ igloos: 'Igloos', villages: 'Villages', mineshafts: 'Mineshafts', ocean_ruins: 'Ocean ruins', shipwrecks: 'Shipwrecks', abandoned_camp: 'Abandoned camps', ruined_portals: 'Ruined portals (any size)', huge_ruined_portals: 'Huge ruined portals', bastion_remnants: 'Bastion remnants', end_cities: 'End cities' })[key] || label(key);
 function variantName(family, detail) {
   if (family === 'mineshafts') return detail === 'mineshaft' ? 'Normal' : 'Badlands';
   if (family === 'shipwrecks') return detail === 'shipwreck' ? 'Regular' : 'Beached';
@@ -130,6 +136,11 @@ const glyph = (kind, key) => kind === 'biome'
   : `<span class="glyph" style="--c:${featureStyle(kind, key).colour}">${icon(featureStyle(kind, key).icon)}</span>`;
 
 const chosen = new Map();
+// The dimension a structure is in when it is not the Overworld: 'nether' or 'end'. Its distances and coordinates are
+// that dimension's own: Nether ones from where a portal at the origin leads, End ones from the End's centre.
+const realmOf = f => (f && f.kind === 'structure' && catalog?.dimensions?.[f.key]) || '';
+const REALMS = { nether: 'Nether', end: 'The End' };
+const realmCommand = (realm, at) => `${realm ? `/execute in minecraft:the_${realm} run tp @s` : '/tp @s'} ${at.x} ${at.y} ${at.z}`;
 let catalog = null, kind = 'structure', state = {}, selectedSeed = null, manualResults = [], resultsSignature = null, toastTimer = 0;
 const fields = ['anchor', 'radius', 'x', 'z', 'threads', 'seed', 'limit', 'maxMatches', 'cluster', 'biomeMode'];
 
@@ -271,7 +282,8 @@ function openPanel(name, keep = false) {
 const condition = (kind, key, extra = {}) => ({ kind, key, radius: Number($('radius').value) || 1000, mode: 'within', minRadius: 0, count: 1, near: '', ...extra });
 // Only a structure you want nearby, itself measured from the origin, can be measured from.
 const canAnchor = f => f && f.kind === 'structure' && f.mode === 'within' && !f.near;
-const anchorsFor = id => [...chosen.entries()].filter(([other, f]) => other !== id && canAnchor(f));
+// Portals link the Overworld and the Nether, so those can be measured from each other; the End only from itself.
+const anchorsFor = id => [...chosen.entries()].filter(([other, f]) => other !== id && canAnchor(f) && (realmOf(f) === 'end') === (realmOf(chosen.get(id)) === 'end'));
 const isAnchor = id => [...chosen.values()].some(f => f.near === id);
 // Older choosers added one AND condition per checkbox. Preserve the distance/count settings,
 // but combine equivalent conditions into alternatives within one structure family.
@@ -324,7 +336,10 @@ function renderFeatures() {
   if (!catalog) return;
   const filter = $('filter').value.trim().toLowerCase();
   const list = [...(kind === 'structure' ? catalog.sets.filter(rootStructure) : catalog.biomes)].filter(k => label(k).toLowerCase().includes(filter) || (kind === 'structure' && familyKeys(k).some(v => label(v).toLowerCase().includes(filter)))).sort((a, b) => label(a).localeCompare(label(b)));
-  $('features').innerHTML = list.map(k => {
+  const realm = k => (kind === 'structure' && catalog.dimensions?.[k]) || '', order = ['', 'nether', 'end'];
+  list.sort((a, b) => order.indexOf(realm(a)) - order.indexOf(realm(b)));
+  const heading = (k, i) => realm(k) && (i === 0 || realm(list[i - 1]) !== realm(k)) ? `<div class="feature-section">${REALMS[realm(k)]}<small>${realm(k) === 'nether' ? 'Nether blocks, from where your portal leads' : 'blocks from the centre of the End'}</small></div>` : '';
+  $('features').innerHTML = list.map((k, i) => heading(k, i) + (() => {
     if (kind === 'structure' && STRUCTURE_FAMILIES.includes(k)) {
       const count = familyKeys(k).filter(v => chosen.has(`structure:${v}`)).length;
       const filters = familyFilterDescription(chosen.get(`structure:${k}`));
@@ -332,7 +347,7 @@ function renderFeatures() {
     }
     const selected = chosen.has(`${kind}:${k}`);
     return `<label class="feature ${selected ? 'selected' : ''}"><input type="checkbox" data-key="${esc(k)}" ${selected ? 'checked' : ''}>${glyph(kind, k)}<span class="name">${esc(label(k))}</span>${icon('check', 'tick')}</label>`;
-  }).join('') || '<p class="loading">No matching features.</p>';
+  })()).join('') || '<p class="loading">No matching features.</p>';
   $('kind-hint').textContent = kind === 'structure' ? 'Structures are confirmed with Minecraft’s own generation-start checks.' : 'Biomes are sampled every 32 blocks at surface height. Tiny patches can be missed.';
 }
 function renderChosen() {
@@ -343,10 +358,12 @@ function renderChosen() {
   const number = (id, field, value, min, max, name) => `<input type="number" data-field="${field}" data-id="${esc(id)}" value="${value}" min="${min}" max="${max}" step="${field === 'count' ? 1 : 50}" aria-label="${name}">`;
   $('chosen').innerHTML = [...chosen.entries()].map(([id, f]) => {
     const avoid = f.mode === 'exclude', name = esc(conditionName(f)), anchors = isAnchor(id) ? [] : anchorsFor(id);
-    const origin = !anchors.length ? '' : `<span class="origin"><span>${avoid ? 'of' : 'from'}</span><select data-near data-id="${esc(id)}" aria-label="What ${name} is measured from"><option value="">the search origin</option>${anchors.map(([other, a]) => `<option value="${esc(other)}" ${f.near === other ? 'selected' : ''}>${a.count > 1 ? 'each' : 'the'} ${esc(label(a.key).toLowerCase())}</option>`).join('')}</select></span>`;
+    const origin = !anchors.length ? '' : `<span class="origin"><span>${avoid ? 'of' : 'from'}</span><select data-near data-id="${esc(id)}" aria-label="What ${name} is measured from"><option value="">${realmOf(f) === 'nether' ? 'where your portal leads' : 'the search origin'}</option>${anchors.map(([other, a]) => `<option value="${esc(other)}" ${f.near === other ? 'selected' : ''}>${a.count > 1 ? 'each' : 'the'} ${esc(label(a.key).toLowerCase())}</option>`).join('')}</select></span>`;
+    const unit = realmOf(f) === 'nether' ? `<span title="Measured in the Nether. One Nether block is eight Overworld blocks, and the origin is where a portal leads: its X and Z divided by 8.">Nether blocks</span>`
+      : realmOf(f) === 'end' && !f.near ? `<span title="Every End portal arrives at the centre of the End, so that is where End distances start.">blocks from the End’s centre</span>` : '<span>blocks</span>';
     const rule = (avoid
-      ? `<span>none within</span>${number(id, 'radius', f.radius, 32, 8000, `Distance to keep clear of ${name}`)}<span>blocks</span>`
-      : `${f.kind === 'structure' ? `${number(id, 'count', f.count, 1, 10, `How many ${name}`)}<span>or more,</span>` : ''}${number(id, 'minRadius', f.minRadius, 0, 7968, `Minimum distance for ${name}`)}<span>to</span>${number(id, 'radius', f.radius, 32, 8000, `Maximum distance for ${name}`)}<span>blocks</span>`) + origin;
+      ? `<span>none within</span>${number(id, 'radius', f.radius, 32, 8000, `Distance to keep clear of ${name}`)}${unit}`
+      : `${f.kind === 'structure' ? `${number(id, 'count', f.count, 1, 10, `How many ${name}`)}<span>or more,</span>` : ''}${number(id, 'minRadius', f.minRadius, 0, 7968, `Minimum distance for ${name}`)}<span>to</span>${number(id, 'radius', f.radius, 32, 8000, `Maximum distance for ${name}`)}${unit}`) + origin;
     const others = avoid || f.near || isAnchor(id) ? null : (f.or || []);
     const pick = (kind, keys) => keys.filter(k => !(kind === f.kind && k === f.key) && !others.some(o => o.kind === kind && o.key === k)).sort((a, b) => label(a).localeCompare(label(b))).map(k => `<option value="${kind}:${esc(k)}">${esc(label(k))}</option>`).join('');
     const either = !others ? '' : `<div class="criterion-or">${others.map((o, i) => `<span>or</span><span class="chip">${glyph(o.kind, o.key)}${esc(label(o.key))}<button data-or-remove="${i}" data-id="${esc(id)}" aria-label="Remove alternative ${esc(label(o.key))}">×</button></span>`).join('')}${others.length < 4 && catalog ? `<select data-or-add data-id="${esc(id)}" aria-label="Add an alternative to ${name}"><option value="">+ or…</option><optgroup label="Structures">${pick('structure', catalog.sets.filter(rootStructure))}</optgroup><optgroup label="Biomes">${pick('biome', catalog.biomes)}</optgroup></select>` : ''}</div>`;
@@ -443,7 +460,7 @@ function subcategoryGroups(family, mode) {
   if (family === 'shipwrecks' && mode === 'find') groups.push({ title: 'In the water', note: 'predicted', field: 'placements', options: (catalog?.structurePlacements?.shipwrecks || []).map(p => ({ value: p, name: placementName(family, p) })) });
   // Map markers are only built for shipwrecks, so the other families' traits can filter a search but not a layer.
   const templates = mode === 'find' || family === 'shipwrecks' ? familyTemplates(family) : [];
-  if (templates.length) groups.push({ title: { shipwrecks: 'Ship', villages: 'Inhabitants', ocean_ruins: 'Size', igloos: 'Basement' }[family] || 'Template', field: 'templates',
+  if (templates.length) groups.push({ title: { shipwrecks: 'Ship', villages: 'Inhabitants', ocean_ruins: 'Size', igloos: 'Basement', bastion_remnants: 'Kind', end_cities: 'Ship' }[family] || 'Template', field: 'templates',
     options: family !== 'shipwrecks' ? templates.map(t => ({ value: t, name: templateName(family, t) }))
       : templates.map(t => ({ value: t, ...shipParts(t) })).sort((a, b) => a.order - b.order || SHIP_SHAPES.indexOf(a.shape) - SHIP_SHAPES.indexOf(b.shape)).map(p => ({ value: p.value, name: p.shape, row: p.row, title: shipTemplateName(p.value) })) });
   return groups;
@@ -665,8 +682,15 @@ $('inspect').onclick = async () => {
 // ---- Results -------------------------------------------------------------
 // Chip text for a matched feature: distance from the origin, or from the match it was measured from.
 // What a built structure turned out to be, beyond its type: read from its pieces by the engine.
-const builtFact = f => f.zombie ? 'Abandoned (zombie)' : f.basement === true ? 'With basement' : f.basement === false ? 'No basement' : f.ruins > 1 ? `Cluster of ${f.ruins}` : f.ruins === 1 ? 'Single ruin' : '';
-const featureChip = f => `${glyph(f.kind, f.key)}${esc(label(f.key))}${f.zombie || f.basement || f.ruins > 1 ? `<i>${esc(builtFact(f).toLowerCase())}</i>` : ''}<b>${fmt(f.distance)}</b>${f.near ? `from ${esc(label(f.near.key).toLowerCase())}` : 'blocks'}`;
+const builtFact = f => f.bastion ? `${TRAITS[f.bastion] || 'Unknown'} bastion` : f.ship ? 'With ship' : f.zombie ? 'Abandoned (zombie)' : f.basement === true ? 'With basement' : f.basement === false ? 'No basement' : f.ruins > 1 ? `Cluster of ${f.ruins}` : f.ruins === 1 ? 'Single ruin' : '';
+const featureChip = f => `${glyph(f.kind, f.key)}${esc(label(f.key))}${f.zombie || f.basement || f.ruins > 1 || f.bastion || f.ship ? `<i>${esc(builtFact(f).toLowerCase())}</i>` : ''}<b>${fmt(f.distance)}</b>${f.near ? `from ${esc(label(f.near.key).toLowerCase())}` : f.dimension === 'nether' ? 'Nether blocks' : f.dimension === 'end' ? 'from the End’s centre' : 'blocks'}`;
+// The End is not on the map: its chip gives the place as a teleport command instead.
+async function copyEndPlace(seed, f) {
+  try {
+    const built = await api('/api/structure', { seed, key: f.key, x: f.x, z: f.z });
+    copyText(realmCommand('end', built.stand || f), `${label(f.key)} at X ${f.x}, Z ${f.z} in the End · teleport command copied`);
+  } catch (e) { toast(e.message, true); }
+}
 const allResults = () => [...manualResults, ...(state.results || [])].filter((r, i, a) => a.findIndex(x => x.seed === r.seed) === i);
 function selectSeed(result) { selectedSeed = result.seed; renderResults(); worldMap.show(result); }
 async function openSeed(seed) {
@@ -727,7 +751,9 @@ $('results').onclick = e => {
   const card = e.target.closest('[data-seed]'); if (!card) return;
   const result = allResults().find(r => r.seed === card.dataset.seed), chip = e.target.closest('[data-feature]');
   selectSeed(result);
-  if (chip) worldMap.focus(result.features[Number(chip.dataset.feature)]);
+  const feature = chip && result.features[Number(chip.dataset.feature)];
+  if (feature?.dimension === 'end') return copyEndPlace(result.seed, feature);
+  if (feature) worldMap.focus(feature);
   if (narrow()) openPanel('map');
 };
 $('results-sort').onchange = renderResults;
@@ -767,7 +793,7 @@ function seedCard(entry) {
   const r = entry.result, version = r?.version || catalog?.version || '';
   return [`Minecraft seed ${entry.seed}${version ? ` · ${versionName(version)}` : ''}`,
     r ? `Spawn: X ${r.spawnX}, Z ${r.spawnZ}` : '',
-    ...(r?.features || []).map(f => `${label(f.key)}${builtFact(f) ? ` (${builtFact(f).toLowerCase()})` : ''}: X ${f.x}, Y ${f.y}, Z ${f.z} · ${fmt(f.distance)} blocks from ${f.near ? `the ${label(f.near.key).toLowerCase()}` : 'the origin'}`),
+    ...(r?.features || []).map(f => `${label(f.key)}${builtFact(f) ? ` (${builtFact(f).toLowerCase()})` : ''}: ${f.dimension ? `${REALMS[f.dimension]} ` : ''}X ${f.x}, Y ${f.y}, Z ${f.z} · ${fmt(f.distance)} blocks from ${f.near ? `the ${label(f.near.key).toLowerCase()}` : 'the origin'}`),
     entry.view ? `Saved view: X ${Math.round(entry.view.x)}, Z ${Math.round(entry.view.z)}` : '',
     entry.tags?.length ? `Tags: ${entry.tags.join(', ')}` : '',
     entry.note?.trim() ? `Notes: ${entry.note.trim()}` : '',
@@ -853,7 +879,7 @@ document.querySelectorAll('[data-library]').forEach(el => el.onclick = () => {
 });
 // One condition in words, e.g. "2+ villages within 1,000" or "no outpost within 400 of the village".
 function describe(f, all) {
-  const name = label(f.key).toLowerCase(), parent = f.near && all.find(o => o.id === f.near), where = parent ? ` of the ${label(parent.key).toLowerCase()}` : '';
+  const name = label(f.key).toLowerCase(), parent = f.near && all.find(o => o.id === f.near), where = parent ? ` of the ${label(parent.key).toLowerCase()}` : realmOf(f) === 'nether' ? ' (Nether blocks)' : realmOf(f) === 'end' ? ' of the End’s centre' : '';
   if (f.mode === 'exclude') return `no ${name} within ${fmt(f.radius)}${where}`;
   return `${f.count > 1 ? `${f.count}+ ` : ''}${name} ${f.minRadius ? `${fmt(f.minRadius)}–${fmt(f.radius)} away` : `within ${fmt(f.radius)}`}${where}`;
 }
@@ -1092,7 +1118,7 @@ async function poll() {
     showUsage();
     if (!$('version').options.length) loadVersions();
     $('settings-minecraft').textContent = `Using ${versionName(catalog.version)}. Change the version with the list at the top right.`;
-    $('nearest-feature').innerHTML = [['structure', catalog.sets], ['biome', catalog.biomes]].map(([k, keys]) => `<optgroup label="${k === 'structure' ? 'Structures' : 'Biomes'}">${[...keys].sort((a, b) => label(a).localeCompare(label(b))).map(key => `<option value="${k}:${esc(key)}">${esc(label(key))}</option>`).join('')}</optgroup>`).join('');
+    $('nearest-feature').innerHTML = [['structure', catalog.sets.filter(k => !catalog.dimensions?.[k])], ['biome', catalog.biomes]].map(([k, keys]) => `<optgroup label="${k === 'structure' ? 'Structures' : 'Biomes'}">${[...keys].sort((a, b) => label(a).localeCompare(label(b))).map(key => `<option value="${k}:${esc(key)}">${esc(label(key))}</option>`).join('')}</optgroup>`).join('');
     // The structure layers are now known, so the map can start filling them in.
     worldMap.refresh(); renderLayers();
     renderFeatures(); renderChosen();
