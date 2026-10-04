@@ -60,16 +60,16 @@ The power button stops the local backend; closing only the browser leaves it ava
 ## Desktop app
 
 `desktop/` wraps the same local app in a window (Electron) and installs like any Windows program. It brings its
-own Python and Java, so the only requirement is Minecraft 26.4-snapshot-2 installed through the launcher. On first
-start it looks in `%APPDATA%/.minecraft`; if the version is not there it asks for the Minecraft folder
+own Python and Java, so the only requirement is Minecraft installed through the launcher (the engine is written
+for 26.4-snapshot-2). On first start it looks in `%APPDATA%/.minecraft`; if nothing is installed there it asks for the Minecraft folder
 (*File → Minecraft folder…* changes it later). Saved seeds, the catalogue and the compiled engine are kept in
 `%APPDATA%/Seed Scout/data`, which updates leave alone; `desktop.log` beside it records each start.
 
 Every push to `main` that touches the app runs `.github/workflows/release.yml`: it raises the patch version in
 `desktop/package.json`, builds the installer and publishes it as a GitHub Release, then writes the update feed
 (`latest.yml` on the `update-feed` branch) with the installer's address and checksum. An installed copy reads
-that feed at start and every four hours, shows a notification while a new version downloads, and offers to
-restart when it is ready (*Help → Check for updates…* checks on demand). Both are read without signing in,
+that feed at start and every four hours and asks whether to update. Yes downloads it and offers to restart;
+No is remembered, and nothing is offered again until you update from *Help → Check for updates…*. Both are read without signing in,
 so updates only work while the repository is public.
 
 ```powershell
@@ -79,6 +79,13 @@ npm start                                  # run from this checkout, using this 
 ./vendor.ps1 -Jdk <path to a JDK 25>       # fetch embeddable Python and build the trimmed Java runtime
 npm run dist                               # build the installer into desktop/dist
 ```
+
+## Minecraft version
+
+The version at the top of the app lists the vanilla versions installed in the Minecraft folder. Picking another
+one compiles the engine against it and restarts the engine on it; the choice is kept in `settings.json`. The
+engine calls the game's world-generation classes directly, so a version where those differ does not compile and
+is refused with the first error, leaving the current version running. Saved rare finds are kept per version.
 
 ## Saved seeds
 

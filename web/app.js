@@ -122,7 +122,8 @@ const fields = ['anchor', 'radius', 'x', 'z', 'threads', 'seed', 'limit', 'maxMa
 
 // PC usage presets: the share of the logical cores given to searches and to map tiles.
 const WORKER_STEPS = [1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 48, 64];
-const USAGE = { quiet: [1 / 8, 1 / 8], balanced: [1 / 4, 1 / 4], maximum: [7 / 8, 1 / 2] };
+// Map tiles gain about 15% from 16 to 24 workers on a 32-thread PC and nothing beyond that.
+const USAGE = { quiet: [1 / 8, 1 / 8], balanced: [1 / 4, 1 / 4], maximum: [7 / 8, 3 / 4] };
 const nearestStep = (target, cores) => WORKER_STEPS.filter(n => n <= Math.max(1, Math.min(cores, target))).pop() || 1;
 const usagePlan = name => { const cores = catalog?.cores || 8, [search, map] = USAGE[name]; return { threads: nearestStep(cores * search, cores), mapWorkers: Math.max(Math.min(2, cores), nearestStep(cores * map, cores)) }; };
 // The preset whose numbers match the two selects, or "custom".
@@ -134,10 +135,29 @@ async function setMapWorkers(count) {
   try { const saved = await api('/api/config', { mapWorkers: +count }); if (catalog) catalog.mapWorkers = saved.mapWorkers; }
   catch (e) { toast(e.message, true); }
 }
+// ---- Minecraft version ----------------------------------------------------
+// The engine runs the installed game's own world generation, so the version is whichever installed one is picked here.
+const versionName = id => `Java ${id.replace('-snapshot-', ' Snapshot ').replace('-pre-', ' Pre-release ').replace('-rc-', ' Release candidate ')}`;
+async function loadVersions() {
+  const select = $('version');
+  try {
+    const { current, versions } = await (await fetch('/api/versions')).json();
+    select.innerHTML = versions.map(v => `<option value="${esc(v.id)}">${esc(versionName(v.id))}</option>`).join('');
+    select.value = select.dataset.current = current;
+    select.disabled = versions.length < 2;
+  } catch { select.innerHTML = `<option>${esc(versionName(catalog?.version || ''))}</option>`; }
+}
+$('version').onchange = async () => {
+  const select = $('version'), wanted = select.value;
+  select.disabled = true; toast(`Switching to ${versionName(wanted)}…`);
+  // The map, results and caches all belong to the old version, so the page starts over on the new one.
+  try { await api('/api/version', { version: wanted }); location.reload(); }
+  catch (e) { select.value = select.dataset.current; select.disabled = false; toast(e.message, true); }
+};
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 function toast(message, error = false) {
   const el = $('toast'); el.textContent = message; el.classList.toggle('error', error); el.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, error ? 4200 : 2200);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, error ? Math.max(4200, message.length * 55) : 2200);
 }
 async function copyText(text, message = 'Copied') { try { await navigator.clipboard.writeText(text); toast(message); } catch { toast(text); } }
 async function api(path, data) {
@@ -793,7 +813,7 @@ async function poll() {
     $('mapWorkers').innerHTML = WORKER_STEPS.filter(n => n <= cores).map(n => `<option>${n}</option>`).join('');
     $('mapWorkers').value = String(nearestStep(catalog.mapWorkers || 2, cores));
     showUsage();
-    if (catalog.version) $('version').textContent = `Java ${catalog.version.replace('-snapshot-', ' Snapshot ')}`;
+    if (!$('version').options.length) loadVersions();
     $('nearest-feature').innerHTML = [['structure', catalog.sets], ['biome', catalog.biomes]].map(([k, keys]) => `<optgroup label="${k === 'structure' ? 'Structures' : 'Biomes'}">${[...keys].sort((a, b) => label(a).localeCompare(label(b))).map(key => `<option value="${k}:${esc(key)}">${esc(label(key))}</option>`).join('')}</optgroup>`).join('');
     // The structure layers are now known, so the map can start filling them in.
     worldMap.refresh(); renderLayers();

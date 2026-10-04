@@ -4,7 +4,7 @@ from urllib.parse import urlsplit, parse_qs
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from build import ROOT, DATA, prepare
+from build import ROOT, DATA, prepare, chosen_version, installed_versions
 SAVED=DATA/'saved-seeds.json'
 CATALOGUE=DATA/'catalogue.db'
 SETTINGS=DATA/'settings.json'
@@ -65,14 +65,21 @@ class Catalogue:
     def delete(self,find):
         with self.db() as db: db.execute('DELETE FROM finds WHERE id=?',(find,))
 
+def read_settings():
+    try: return json.loads(SETTINGS.read_text(encoding='utf-8'))
+    except (OSError,ValueError): return {}
+def write_settings(patch):
+    temp=SETTINGS.with_suffix('.tmp');temp.write_text(json.dumps({**read_settings(),**patch},indent=2),encoding='utf-8');os.replace(temp,SETTINGS)
+
 class Engine:
-    def __init__(self):
+    def __init__(self,version=None):
+        self.version=version or chosen_version()
         self.lock=threading.RLock(); self.write_lock=threading.Lock(); self.ready=threading.Event()
         self.catalog=None; self.failure=''; self.counter=0; self.pending={}
         self.tiles=OrderedDict(); self.tile_pending={}; self.structure_tiles=OrderedDict()
         self.catalogue=Catalogue(); self.jobs={}; self.stopping=False; self.busy=False
         self.state={'running':False,'tested':0,'matches':0,'seconds':0,'results':[],'error':'','engineRevision':2}
-        command=prepare()
+        command=prepare(self.version)
         self.log=open(DATA/'runtime/engine.log','a',encoding='utf-8')
         self.process=subprocess.Popen(command,cwd=DATA,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,text=True,encoding='utf-8',bufsize=1)
         saved=DATA/'runtime/last-search.json'
@@ -328,15 +335,13 @@ class Engine:
         places=[tuple(int(v) for v in place.split(',')) for place in request['at'].split(';')]
         if not 1<=len(places)<=16 or any(len(place)!=2 for place in places): raise ValueError('Ask for 1–16 tiles at a time')
         return places
-    def settings(self):
-        try: return json.loads(SETTINGS.read_text(encoding='utf-8'))
-        except (OSError,ValueError): return {}
+    def settings(self): return read_settings()
     def configure(self,request):
         if self.catalog is None: raise ValueError('Snapshot engine is still starting.')
         workers=number(request,'mapWorkers')
         if not 1<=workers<=self.catalog['cores']: raise ValueError(f"Use 1–{self.catalog['cores']} map workers.")
         with self.lock:
-            temp=SETTINGS.with_suffix('.tmp');temp.write_text(json.dumps({**self.settings(),'mapWorkers':workers},indent=2),encoding='utf-8');os.replace(temp,SETTINGS)
+            write_settings({'mapWorkers':workers})
             self.send({'cmd':'config','mapThreads':workers});self.catalog['mapWorkers']=workers
         return {'mapWorkers':workers}
     def map_request(self,request,command):
@@ -395,6 +400,32 @@ class Engine:
             except (OSError,subprocess.TimeoutExpired): self.process.terminate()
         self.log.close()
 
+SWITCHING=threading.Lock()
+def switch_version(server,request):
+    """Restart the engine on another installed Minecraft version. The new version is compiled first, so one the
+    engine does not support is refused with nothing changed."""
+    version=str(request.get('version',''))
+    if version not in [v['id'] for v in installed_versions()]: raise ValueError('That Minecraft version is not installed.')
+    with SWITCHING:
+        old=server.engine
+        with old.lock:
+            if old.state['running'] or old.busy: raise ValueError('Stop the current search before changing the Minecraft version.')
+        if version==old.version: return {'version':version}
+        try: prepare(version)
+        except (RuntimeError,OSError) as error: raise ValueError(str(error)) from None
+        # Two engines cannot share the data folder, so the old one stops before the new one starts.
+        old.close()
+        try:
+            engine=server.engine=Engine(version)
+            engine.ready.wait(180)
+            if engine.catalog is None: raise RuntimeError(f'Minecraft {version} compiled, but its engine did not start (see runtime/engine.log).')
+        except (RuntimeError,OSError) as error:
+            with contextlib.suppress(Exception): server.engine.close()
+            server.engine=Engine(old.version)
+            raise ValueError(f'{error} Seed Scout is back on {old.version}.') from None
+        write_settings({'version':version})
+        return {'version':version}
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
     def reply(self,obj,status=200,cache='no-store'):
@@ -446,6 +477,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=='/api/status':
             with self.server.engine.lock: data=copy.deepcopy(self.server.engine.state);data.update(ready=self.server.engine.catalog is not None,catalog=self.server.engine.catalog)
             return self.reply(data)
+        if self.path=='/api/versions': return self.reply({'current':self.server.engine.version,'versions':installed_versions()})
         if self.path=='/api/saved': return self.reply({'seeds':self.server.engine.saved()})
         if self.path=='/api/catalogue': return self.reply({'finds':self.server.engine.catalogue.listing()})
         if self.path=='/api/catalogue-export':
@@ -482,6 +514,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/saved': result=self.server.engine.save_seed(request)
             elif self.path=='/api/saved-delete': result=self.server.engine.forget_seed(request)
             elif self.path=='/api/config': result=self.server.engine.configure(request)
+            elif self.path=='/api/version': result=switch_version(self.server,request)
             elif self.path=='/api/catalogue-delete': self.server.engine.catalogue.delete(int(request['id']));result={'finds':self.server.engine.catalogue.listing()}
             elif self.path=='/api/catalogue-import': result=self.server.engine.catalogue_import(request)
             elif self.path=='/api/export':
@@ -506,10 +539,10 @@ def main():
             return
     except (OSError,ValueError): pass
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
-    engine=Engine(); atexit.register(engine.close);server.engine=engine
+    server.engine=Engine(); atexit.register(lambda: server.engine.close())
     url=f'http://127.0.0.1:{server.server_port}'
     print('Seed Scout: '+url,flush=True)
     if not args.no_browser: webbrowser.open(url)
     try: server.serve_forever()
-    finally: server.server_close();engine.close()
+    finally: server.server_close();server.engine.close()
 if __name__=='__main__': main()

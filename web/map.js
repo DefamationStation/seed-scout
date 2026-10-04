@@ -105,7 +105,7 @@ const worldMap = (() => {
         const budget = Math.max(CACHE_SIZE, wanted().fine.length + previewTiles.length);
         while (cache.size > budget) cache.delete(cache.keys().next().value);
       };
-      const query = new URLSearchParams({ v: '4', seed, step, mode, at: tiles.map(t => `${t.x},${t.z}`).join(';') });
+      const query = new URLSearchParams({ v: `4-${catalog?.version || ''}`, seed, step, mode, at: tiles.map(t => `${t.x},${t.z}`).join(';') });
       const streaming = supportsTileStream;
       fetch(`/api/${streaming ? 'tile-stream' : 'tiles'}?${query}`, { signal: controller.signal })
         .then(async response => {

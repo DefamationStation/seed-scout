@@ -4,12 +4,12 @@ const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// The engine is written against this version's world-generation classes.
+// The version the engine was written against; the backend falls back to another installed one when it is missing.
 const SUPPORTED_VERSION = '26.4-snapshot-2';
 const UPDATE_INTERVAL = 4 * 60 * 60 * 1000;
 const REPOSITORY = 'DefamationStation/seed-scout';
 
-let window = null, backend = null, backendUrl = '', quitting = false, logStream = null, updateReady = false;
+let window = null, backend = null, backendUrl = '', quitting = false, logStream = null, updateReady = false, updateAvailable = '';
 
 // Installed, everything the backend needs sits beside the app. From a checkout it uses the repository and this machine's tools.
 const packaged = app.isPackaged;
@@ -25,7 +25,11 @@ function saveSettings(patch) { fs.writeFileSync(settingsFile(), JSON.stringify({
 function log(text) { logStream?.write(text.endsWith('\n') ? text : text + '\n'); }
 
 const defaultMinecraft = () => path.join(app.getPath('appData'), '.minecraft');
-const hasVersion = folder => ['jar', 'json'].every(ext => fs.existsSync(path.join(folder, 'versions', SUPPORTED_VERSION, `${SUPPORTED_VERSION}.${ext}`)));
+// A usable Minecraft folder has at least one downloaded version; which one is used is chosen inside the app.
+function hasVersion(folder) {
+  try { return fs.readdirSync(path.join(folder, 'versions')).some(name => fs.existsSync(path.join(folder, 'versions', name, `${name}.jar`))); }
+  catch { return false; }
+}
 
 // The Minecraft folder to read: the saved choice, else the launcher's default. Asks when the version is not there.
 async function minecraftFolder(forceAsk = false) {
@@ -33,9 +37,9 @@ async function minecraftFolder(forceAsk = false) {
   while (forceAsk || !hasVersion(folder)) {
     const { response } = await dialog.showMessageBox(window, {
       type: forceAsk ? 'question' : 'warning', buttons: ['Choose Minecraft folder…', forceAsk ? 'Cancel' : 'Quit'], defaultId: 0, cancelId: 1,
-      message: forceAsk ? 'Choose your Minecraft folder' : `Minecraft ${SUPPORTED_VERSION} was not found`,
-      detail: `Seed Scout reads the game's own world generation from your install and needs version ${SUPPORTED_VERSION}.\n\n` +
-        `Current folder: ${folder}\n\nInstall that version in the Minecraft Launcher (run it once so its files download), or choose the folder that contains "versions" and "libraries".`,
+      message: forceAsk ? 'Choose your Minecraft folder' : 'No Minecraft install was found',
+      detail: `Seed Scout reads the game's own world generation from your install. It was written for ${SUPPORTED_VERSION}; the version is chosen at the top of the app.\n\n` +
+        `Current folder: ${folder}\n\nInstall a version in the Minecraft Launcher (run it once so its files download), or choose the folder that contains "versions" and "libraries".`,
     });
     if (response !== 0) return forceAsk ? null : undefined;
     const picked = await dialog.showOpenDialog(window, { title: 'Minecraft folder', defaultPath: folder, properties: ['openDirectory'] });
@@ -49,7 +53,7 @@ async function minecraftFolder(forceAsk = false) {
 
 function startBackend(minecraft) {
   backendUrl = '';
-  const env = { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', SEED_SCOUT_DATA: dataDir(), SEED_SCOUT_MINECRAFT: minecraft, SEED_SCOUT_VERSION: SUPPORTED_VERSION };
+  const env = { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', SEED_SCOUT_DATA: dataDir(), SEED_SCOUT_MINECRAFT: minecraft };
   if (jdk) env.SEED_SCOUT_JDK = jdk;
   // Port 0 lets the system pick a free port; the backend prints the address it ended up on.
   const child = backend = spawn(python, [path.join(appRoot, 'app.py'), '--port', '0', '--no-browser'], { cwd: dataDir(), env, windowsHide: true });
@@ -128,10 +132,15 @@ async function showReleaseNotes(version = app.getVersion()) {
   if (response === 1) shell.openExternal(page);
 }
 async function showAbout() {
+  let minecraft = '';
+  try { minecraft = (await (await fetch(`${backendUrl}/api/versions`)).json()).current; } catch { }
+  const update = updateReady ? `Version ${updateAvailable} is downloaded and installs on restart.` : updateAvailable ? `Version ${updateAvailable} is available (Help → Update).`
+    : settings().updates === 'manual' ? 'Automatic update prompts are off; check from the Help menu.' : 'No newer version was found at the last check.';
   const { response } = await dialog.showMessageBox(window, {
-    type: 'info', buttons: ['OK', "What's new", 'GitHub'], defaultId: 0, cancelId: 0, message: `Seed Scout ${app.getVersion()}`,
+    type: 'info', buttons: ['OK', "What's new", 'GitHub'], defaultId: 0, cancelId: 0, message: `Seed Scout version ${app.getVersion()}`,
     detail: `Finds Minecraft seeds by the structures and biomes near spawn, with a terrain map.\n\n` +
-      `Reads Minecraft ${SUPPORTED_VERSION} from:\n${settings().minecraft || defaultMinecraft()}\n\n` +
+      `App version: ${app.getVersion()}\n${update}\n\n` +
+      `Minecraft version in use: ${minecraft || 'not started yet'}\nRead from: ${settings().minecraft || defaultMinecraft()}\n\n` +
       `Open source under the MIT licence. Not affiliated with Mojang or Microsoft; Minecraft is not included.`,
   });
   if (response === 1) showReleaseNotes();
@@ -139,19 +148,37 @@ async function showAbout() {
 }
 
 // ---- Updates: the release workflow publishes each version to GitHub Releases, where the updater looks. ----
+// A new version is offered with a yes or no. "No" is remembered across restarts: nothing is offered again until
+// the user checks from the Help menu and says yes, which turns the offers back on.
 function setupUpdates() {
   if (!packaged) return null;
   const { autoUpdater } = require('electron-updater');
   autoUpdater.logger = { info: m => log(`[update] ${m}`), warn: m => log(`[update] ${m}`), error: m => log(`[update] ${m}`), debug() { } };
-  autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
-  let asked = false;
+  autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true;
+  let asked = false, offering = false, downloading = false;
+  async function offer(info) {
+    if (offering || downloading || updateReady) return;
+    offering = true;
+    const { response } = await dialog.showMessageBox(window, {
+      type: 'question', buttons: ['Yes', 'No'], defaultId: 0, cancelId: 1, message: `Update Seed Scout to ${info.version}?`,
+      detail: `You have version ${app.getVersion()}. The update downloads now and installs when the app restarts.\n\n` +
+        'If you choose No, Seed Scout will not ask again. You can still update at any time from Help → Check for updates.',
+    });
+    offering = false;
+    if (response !== 0) return saveSettings({ updates: 'manual' });
+    saveSettings({ updates: 'ask' }); downloading = true;
+    if (Notification.isSupported()) new Notification({ title: 'Seed Scout update', body: `Version ${info.version} is downloading.` }).show();
+    autoUpdater.downloadUpdate().catch(error => { downloading = false; dialog.showMessageBox(window, { type: 'warning', message: 'The update could not be downloaded', detail: String(error?.message || error).slice(0, 600) }); });
+  }
   autoUpdater.on('update-available', info => {
-    if (Notification.isSupported()) new Notification({ title: 'Seed Scout update', body: `Version ${info.version} is available and is downloading.` }).show();
+    const byUser = asked; asked = false;
+    updateAvailable = info.version; buildMenu();
+    if (byUser || settings().updates !== 'manual') offer(info);
   });
   autoUpdater.on('update-not-available', () => { if (asked) dialog.showMessageBox(window, { message: 'Seed Scout is up to date', detail: `Version ${app.getVersion()}` }); asked = false; });
   autoUpdater.on('error', error => { if (asked) dialog.showMessageBox(window, { type: 'warning', message: 'Could not check for updates', detail: String(error?.message || error).slice(0, 600) }); asked = false; });
   autoUpdater.on('update-downloaded', async info => {
-    updateReady = true; asked = false; buildMenu();
+    updateReady = true; downloading = false; updateAvailable = info.version; buildMenu();
     const { response } = await dialog.showMessageBox(window, {
       type: 'info', buttons: ['Restart now', 'Later'], defaultId: 0, cancelId: 1,
       message: `Seed Scout ${info.version} is ready`, detail: 'Restart to finish updating. Otherwise it installs the next time you close the app.',
@@ -175,10 +202,11 @@ function buildMenu() {
     ] },
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { label: 'Help', submenu: [
-      updateReady ? { label: 'Restart to update', click: installUpdate } : { label: 'Check for updates…', enabled: !!updates, click: () => updates.check() },
       { label: "What's new", click: () => showReleaseNotes() },
       { type: 'separator' },
-      { label: 'About Seed Scout', click: showAbout },
+      updateReady ? { label: `Restart to update to ${updateAvailable}`, click: installUpdate }
+        : { label: updateAvailable ? `Update to ${updateAvailable}…` : 'Check for updates…', enabled: !!updates, click: () => updates.check() },
+      { label: `About Seed Scout ${app.getVersion()}`, click: showAbout },
     ] },
   ]));
 }
