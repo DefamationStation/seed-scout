@@ -86,6 +86,32 @@ async function changeMinecraft() {
   stopBackend(); window.loadFile(path.join(__dirname, 'loading.html')); startBackend(folder);
 }
 
+// Brings saved seeds and the rare-find catalogue over from a checkout or another install's data folder.
+async function importData() {
+  const picked = await dialog.showOpenDialog(window, { title: 'Folder that holds saved-seeds.json or catalogue.db', properties: ['openDirectory'] });
+  if (picked.canceled) return;
+  const from = picked.filePaths[0], names = ['saved-seeds.json', 'catalogue.db'].filter(name => fs.existsSync(path.join(from, name)));
+  if (!names.length) return dialog.showMessageBox(window, { type: 'warning', message: 'Nothing to import', detail: 'That folder has no saved-seeds.json or catalogue.db. Choose a Seed Scout folder, or the data folder of another install.' });
+  if (path.resolve(from) === path.resolve(dataDir())) return;
+  const { response } = await dialog.showMessageBox(window, {
+    type: 'question', buttons: ['Import', 'Cancel'], defaultId: 0, cancelId: 1, message: `Import ${names.join(' and ')}?`,
+    detail: 'This replaces the saved seeds and catalogue in this app. The current ones are kept beside them with ".bak" added to their names.',
+  });
+  if (response !== 0) return;
+  // The backend holds the catalogue open, so it is stopped for the copy and started again afterwards.
+  const child = backend, minecraft = settings().minecraft || defaultMinecraft();
+  if (child) await new Promise(done => { child.once('exit', done); setTimeout(done, 5000); stopBackend(); });
+  window.loadFile(path.join(__dirname, 'loading.html'));
+  try {
+    for (const name of names) {
+      const target = path.join(dataDir(), name);
+      if (fs.existsSync(target)) fs.copyFileSync(target, `${target}.bak`);
+      fs.copyFileSync(path.join(from, name), target);
+    }
+  } catch (error) { dialog.showMessageBox(window, { type: 'error', message: 'Import failed', detail: String(error.message || error) }); }
+  startBackend(minecraft);
+}
+
 // ---- Updates: the release workflow publishes each version to GitHub Releases, where the updater looks. ----
 function setupUpdates() {
   if (!packaged) return null;
@@ -117,6 +143,7 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [
       { label: 'Minecraft folder…', click: changeMinecraft },
+      { label: 'Import saved seeds and catalogue…', click: importData },
       { label: 'Open data folder', click: () => shell.openPath(dataDir()) },
       { type: 'separator' }, { role: 'quit' },
     ] },

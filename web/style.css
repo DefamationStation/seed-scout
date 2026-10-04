@@ -205,6 +205,7 @@ select option, select optgroup { background: var(--surface-2); color: var(--text
 .result { padding: 12px 13px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); cursor: pointer; transition: border-color .12s, background .12s; }
 .result:hover { border-color: var(--line-strong); }
 .result.active { border-color: var(--accent); background: linear-gradient(0deg, var(--accent-soft), var(--accent-soft)), var(--surface-2); }
+.field.sort { margin: 0 0 10px; }
 .result-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .result-top code { font-size: 13.5px; font-weight: 600; word-break: break-all; }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }

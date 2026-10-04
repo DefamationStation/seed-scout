@@ -56,7 +56,7 @@ public final class SeedEngine {
     static final int CORES=Runtime.getRuntime().availableProcessors();
     // Tile generation scales with threads; half the cores keeps the map quick and still leaves room for a running search.
     static final int MAP_THREADS=Math.clamp(CORES/2,2,16);
-    static final ThreadPoolExecutor MAP_WORKERS=new ThreadPoolExecutor(MAP_THREADS,MAP_THREADS,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(512),r->{var t=new Thread(r,"map-tile");t.setDaemon(true);return t;});
+    static final ThreadPoolExecutor MAP_WORKERS=new ThreadPoolExecutor(MAP_THREADS,MAP_THREADS,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(512),r->{var t=new Thread(r,"map-tile");t.setDaemon(true);t.setPriority(Thread.NORM_PRIORITY+1);return t;});
     static final ThreadLocal<Map<Long,RandomState>> MAP_STATES=ThreadLocal.withInitial(()->new LinkedHashMap<>(4,.75f,true){protected boolean removeEldestEntry(Map.Entry<Long,RandomState> e){return size()>3;}});
     // The structure state carries the world origin and, once asked for, the stronghold ring positions.
     static final ThreadLocal<Map<Long,ChunkGeneratorStructureState>> MAP_STRUCTURES=ThreadLocal.withInitial(()->new LinkedHashMap<>(4,.75f,true){protected boolean removeEldestEntry(Map.Entry<Long,ChunkGeneratorStructureState> e){return size()>3;}});
@@ -554,10 +554,12 @@ public final class SeedEngine {
             seeds=r.has("seeds")?StreamSupport.stream(r.getAsJsonArray("seeds").spliterator(),false).mapToLong(e->Long.parseLong(e.getAsString())).toArray():null;
             limit=seeds!=null?seeds.length:r.get("limit").getAsLong();}
         void report(boolean done){emit(Map.of("type","progress","id",id,"tested",tested.sum(),"matches",Math.min(matches.get(),maxMatches),"seconds",(System.nanoTime()-began)/1e9,"running",!done,"error",failure,"nextSeed",Long.toString(start+checkpoint())));}
-        void start(){reporting=PROGRESS.scheduleAtFixedRate(()->report(false),0,500,TimeUnit.MILLISECONDS);for(int i=0;i<threads;i++){new Thread(()->{
+        void start(){reporting=PROGRESS.scheduleAtFixedRate(()->report(false),0,500,TimeUnit.MILLISECONDS);for(int i=0;i<threads;i++){var worker=new Thread(()->{
             try {while(running.get()){long index=claim();if(index<0)break;var result=evaluate(seeds==null?start+index:seeds[(int)index],request,features,this);if(!running.get())break;tested.increment();complete(index);if(result!=null){int count=matches.incrementAndGet();if(count<=maxMatches)emit(Map.of("type","match","id",id,"data",result));if(count>=maxMatches)running.set(false);}}}
             catch(Throwable e){failure=e.toString();running.set(false);e.printStackTrace(System.err);}
             finally{if(finished.incrementAndGet()==threads){running.set(false);reporting.cancel(false);report(true);}}
-        },"seed-worker-"+i).start();}}
+        },"seed-worker-"+i);
+        // Below the map workers: a search on every core must not make the map wait.
+        worker.setPriority(Thread.NORM_PRIORITY-1);worker.start();}}
     }
 }

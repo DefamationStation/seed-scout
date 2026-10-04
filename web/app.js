@@ -428,14 +428,27 @@ $('export').onclick = async () => {
     const a = document.createElement('a'); a.href = result.url; a.download = 'seed-scout-results.json'; a.click();
   } catch (e) { toast(e.message, true); }
 };
+// The nearest match of one condition in a result, for sorting by that feature alone.
+const nearest = (result, key) => Math.min(Infinity, ...result.features.filter(f => f.key === key).map(f => f.distance));
 function renderResults() {
-  const results = allResults();
+  let results = allResults();
+  // Results arrive closest overall first; with several conditions they can also be ordered by one of them.
+  const keys = [...new Set(results.flatMap(r => r.features.map(f => f.key)))], sort = $('results-sort');
+  if (sort.dataset.keys !== keys.join()) {
+    const chosen = sort.value;
+    sort.dataset.keys = keys.join();
+    sort.innerHTML = `<option value="">Closest overall</option>${keys.map(k => `<option value="${esc(k)}">Nearest ${esc(label(k).toLowerCase())}</option>`).join('')}`;
+    sort.value = keys.includes(chosen) ? chosen : '';
+  }
+  $('results-sort-row').hidden = results.length < 2 || keys.length < 2;
+  if (sort.value && !$('results-sort-row').hidden) results = [...results].sort((a, b) => nearest(a, sort.value) - nearest(b, sort.value));
   if (results.length && !results.some(r => r.seed === selectedSeed)) { selectedSeed = results[0].seed; worldMap.show(results[0]); }
   if (!results.length) { worldMap.clear(); selectedSeed = null; }
   const badge = $('results-badge'); badge.hidden = !results.length; badge.textContent = results.length;
   $('export').disabled = !results.length;
   // Polling calls this every second; only rebuild the list when it actually changed.
   const signature = results.map(r => `${r.seed}:${r.features.length}:${savedEntry(r.seed) ? 1 : 0}`).join('|') + `#${selectedSeed}`;
+  // (The order is part of the signature, so choosing another sort rebuilds the list.)
   if (signature === resultsSignature) return;
   resultsSignature = signature;
   $('results').innerHTML = results.map(r => {
@@ -458,6 +471,7 @@ $('results').onclick = e => {
   if (chip) worldMap.focus(result.features[Number(chip.dataset.feature)]);
   if (narrow()) openPanel('map');
 };
+$('results-sort').onchange = renderResults;
 $('results').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-seed]')) { e.preventDefault(); e.target.click(); } };
 
 // ---- Saved seeds ---------------------------------------------------------

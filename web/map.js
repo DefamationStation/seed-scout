@@ -51,9 +51,9 @@ const worldMap = (() => {
   const MAX_TERRAIN_STEP = 16, MAX_STEP = 128, STEPS = [1, 2, 4, 8, 16, 32, 64, 128];
   const modeFor = step => step > MAX_TERRAIN_STEP ? 'quick' : 'terrain';
   const terrainStep = () => Math.max(1, Math.min(MAX_STEP, 2 ** Math.ceil(Math.log2(bpp * 2))));
-  function tilesFor(step) {
+  function tilesFor(step, mode = modeFor(step)) {
     if (!result || !width) return [];
-    const span = step * 32, offset = terrain.sampleOffset(step), view = bounds(), tiles = [], mode = modeFor(step);
+    const span = step * 32, offset = terrain.sampleOffset(step), view = bounds(), tiles = [];
     for (let z = Math.floor((view.top - offset) / span) * span; z + offset < view.bottom; z += span)
       for (let x = Math.floor((view.left - offset) / span) * span; x + offset < view.right; x += span) {
         if (Math.abs(x) > 29990000 || Math.abs(z) > 29990000) continue;
@@ -66,8 +66,9 @@ const worldMap = (() => {
     const view = `${result?.seed}:${centre.x}:${centre.z}:${bpp}:${width}:${height}`;
     if (view !== terrainView) {
       terrainView = view; terrainTiles = tilesFor(step);
-      // Terrain views are previewed with the finest quick tiles, which arrive almost at once.
-      previewTiles = modeFor(step) === 'terrain' ? tilesFor(MAX_TERRAIN_STEP * 2) : [];
+      // Biome first: a terrain view starts as the quick biome map at a quarter of its resolution, which is a
+      // sixteenth of the tiles and arrives in about a tenth of a second; terrain then fills in on top of it.
+      previewTiles = modeFor(step) === 'terrain' ? tilesFor(step * 4, 'quick') : [];
     }
     const missing = terrainTiles.some(t => !cache.has(t.key));
     const preview = missing ? previewTiles.filter(t => !cache.has(t.key) && (failed.get(t.key) || 0) <= Date.now()) : [];
