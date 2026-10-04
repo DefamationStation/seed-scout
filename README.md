@@ -127,7 +127,8 @@ A seed search and a search inside a seed cannot run at the same time.
 Under *Search around* in Find:
 
 - **Spawn biome:** require the world spawn to be in one of a list of biomes, or keep it out of them. The biome
-  is read at the spawn-region position on the real terrain column, the same position results report as spawn.
+  is read on the real terrain column at the middle of the spawn chunk, which is within 12 blocks of the reported
+  spawn point on land.
 - **Slime chunks:** require at least N slime chunks in the square of chunks reaching R chunks (1–8) from the
   search origin, with the game's own slime-chunk formula.
 - **Either / or:** a condition you want nearby can take up to four alternatives ("+ or…" on its row): another
@@ -184,7 +185,11 @@ The catalogue is stored in `catalogue.db` (SQLite) next to `app.py`.
   They do not generate all blocks or
   validate post-placement terrain/loot. Coordinates are the structure's locate position;
   Y is its bounding-box minimum, not necessarily an entrance or walkable height.
-- Spawn is the generator's initial spawn region. Final player spawn can shift after terrain checks.
+- Spawn is the world spawn point the game stores when it creates the world: from the spawn chunk it walks a
+  spiral of 11 x 11 chunks and takes the first block with dry ground, which on land is the corner of the spawn
+  chunk. It is worked out from base terrain for the seeds that are reported (checked against a saved world's
+  level.dat). Each player then appears on a random block within 10 blocks of it (the respawn radius game rule),
+  which no tool can predict. Search distances are measured from the middle of the spawn chunk.
   Distances are horizontal distances from that region, not a guarantee from the final player position.
 - Biome searches look at each sample above the surface first (one lookup on the biome source) and only estimate
   the terrain where that gives the wanted biome. The matches are the same; searches for a biome that is mostly
@@ -321,10 +326,11 @@ only landmarks show when zoomed out and more fills in as you zoom in. Every laye
 and its own zoom-level selector, a master switch hides them all, and *Reset* restores the defaults.
 Click **Villages**, **Mineshafts**, **Ocean ruins**, **Shipwrecks**, **Abandoned camps**, or **Ruined portals**
 in Find or Layers to toggle the entire family; enabling a category selects all variants by default.
-Click its separate arrow button to open the subcategory chooser. It offers all the Overworld variants from the installed
+Click the sliders button beside it to narrow the family. The chooser offers all the Overworld variants from the installed
 snapshot: five village types, normal/badlands mineshafts, cold/warm ruins, regular/beached shipwrecks,
-18 camp variants, and six portal biome variants. Find treats selected subcategories as alternatives
-within one family condition; **Any variant** accepts the entire family. Layers filters the family's markers without
+18 camp variants, and six portal biome variants. Each group of choices has an **Any** button; lighting some of its
+choices narrows the group to those, as alternatives, and a structure must satisfy every narrowed group. In Find,
+picking anything adds the family to the search. Layers filters the family's markers without
 duplicating them, and saves those filters with the layer settings and presets.
 The shipwreck chooser also offers all 20 shipwreck templates from this snapshot. They distinguish whole ships (including
 the mast variant), front and back halves, upright/sideways/upside-down orientations, and degraded or

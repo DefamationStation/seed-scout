@@ -26,26 +26,33 @@ code { font-family: var(--mono); }
 .category-feature .name { flex: 1; min-width: 0; }
 .category-feature small { display: block; margin-top: 3px; color: var(--muted); font-size: 10.5px; }
 .subcategory-arrow { display: grid; place-items: center; flex: none; width: 28px; min-height: 32px; align-self: stretch; padding: 0; border: 0; border-left: 1px solid var(--line); background: none; color: var(--muted); border-radius: 0 8px 8px 0; }
-.subcategory-arrow .icon { width: 14px; height: 14px; transform: rotate(-90deg); }
+.subcategory-arrow .icon { width: 14px; height: 14px; }
 .subcategory-arrow:hover { background: var(--accent-soft); color: var(--accent); }
 .layer-category { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; border: 0; padding: 0; background: none; text-align: left; border-radius: 4px; }
 .layer-category:hover b { color: var(--accent); }
 .subcategory-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 20px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 .subcategory-dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .subcategory-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
-.subcategory-dialog fieldset { margin: 14px 0 0; padding: 8px; border: 1px solid var(--line); border-radius: 9px; }
-.subcategory-dialog fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.subcategory-dialog fieldset > .subcategory-option:has(input[value="*"]) { grid-column: 1 / -1; }
-.portal-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.portal-options > .subcategory-option { grid-column: 1 / -1; }
-.portal-options fieldset { display: block; min-width: 0; }
-.subcategory-dialog legend { padding: 0 5px; color: var(--text-2); font-weight: 600; }
-.subcategory-option { display: flex; align-items: center; gap: 10px; padding: 8px; cursor: pointer; border-radius: 6px; }
-.subcategory-option:hover { background: var(--surface-2); }
-.subcategory-option input { accent-color: var(--accent); }
-.subcategory-footer { display: flex; justify-content: flex-end; margin-top: 16px; }
+.subcategory-dialog[open] { display: flex; flex-direction: column; }
+.subcategory-summary { margin: 0 0 4px; color: var(--text-2); font-size: 12.5px; }
+#subcategory-options { overflow-y: auto; min-height: 0; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.sub-group { padding: 12px 0; border-top: 1px solid var(--line); }
+.sub-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.sub-group h4 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-2); }
+.sub-group h4 small { margin-left: 6px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick { height: 28px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.pick:hover { border-color: var(--line-strong); color: var(--text); }
+.pick.on { border-color: rgba(127, 216, 140, .6); background: var(--accent-soft); color: var(--accent-strong); }
+.pick.any { height: 24px; padding: 0 10px; font-size: 11.5px; }
+.pick-row { display: grid; grid-template-columns: 136px minmax(0, 1fr); align-items: center; gap: 8px; }
+.pick-row + .pick-row { margin-top: 6px; }
+.pick-row > span { color: var(--muted); font-size: 12px; }
+.subcategory-dialog .hint { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.subcategory-footer { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.subcategory-footer span { flex: 1; }
 @media (max-width: 520px) {
-  .portal-options, .subcategory-dialog fieldset { grid-template-columns: 1fr; }
+  .pick-row { grid-template-columns: 1fr; gap: 4px; }
 }
 .icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 

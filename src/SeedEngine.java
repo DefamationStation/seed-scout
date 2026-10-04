@@ -336,6 +336,24 @@ public final class SeedEngine {
         }
         return result;
     }
+    // The world spawn point, as the game settles it when a world is created (MinecraftServer.setInitialSpawn):
+    // starting from the spawn chunk it walks a square spiral of 11 x 11 chunks and takes the first column, x then z
+    // from the chunk's lowest corner, that has dry ground to stand on. On land that is the corner of the spawn chunk
+    // itself, 8 blocks from its middle in both directions. With no such column it stays at the chunk's middle.
+    // Base terrain only: ice, lakes and other decoration the game places later are not known here.
+    static int[] worldSpawn(RandomState state,ChunkPos origin) {
+        for(int i=0,x=0,z=0,dx=0,dz=-1;i<121;i++) {
+            int minX=(origin.x()+x)<<4,minZ=(origin.z()+z)<<4;
+            for(int bx=minX;bx<minX+16;bx++)for(int bz=minZ;bz<minZ+16;bz++) {
+                var column=Surface.of(generator.getBaseColumn(bx,bz,heights,state));
+                if(!column.water())return new int[]{bx,column.ground()+1,bz};
+            }
+            if(x==z||x<0&&x==-z||x>0&&x==1-z){int t=dx;dx=-dz;dz=t;}
+            x+=dx;z+=dz;
+        }
+        int x=origin.getMiddleBlockX(),z=origin.getMiddleBlockZ();
+        return new int[]{x,generator.getBaseColumn(x,z,heights,state).topBlockY()+1,z};
+    }
     // The surface biome at a block position, as the game resolves it.
     static String surfaceBiome(long seed,RandomState state,int x,int z) {
         var manager=new BiomeManager(generator.getBiomeSource().createUncachedResolver(state),BiomeManager.obfuscateSeed(seed));
@@ -383,10 +401,13 @@ public final class SeedEngine {
         var structState=ChunkGeneratorStructureState.createForNormal(state,seed,origin,generator.getBiomeSource(),access.lookupOrThrow(Registries.STRUCTURE_SET));
         var found=around(seed,state,structState,parsed,x,z,request,job);
         if(found==null)return null;
-        var result=new LinkedHashMap<String,Object>();result.put("seed",Long.toString(seed));result.put("spawnX",origin.getMiddleBlockX());result.put("spawnZ",origin.getMiddleBlockZ());
+        var result=new LinkedHashMap<String,Object>();result.put("seed",Long.toString(seed));
+        // Distances are measured from the middle of the spawn chunk, which costs nothing to know; the spawn point
+        // itself needs terrain, so it is worked out only for the seeds that are reported.
+        var spawn=worldSpawn(state,origin);result.put("spawnX",spawn[0]);result.put("spawnY",spawn[1]);result.put("spawnZ",spawn[2]);result.put("anchor",custom?"custom":"spawn");
         result.put("anchorX",x);result.put("anchorZ",z);result.put("features",found);result.put("version",SharedConstants.getCurrentVersion().id());
-        result.put("spawnAccuracy","Snapshot spawn-region estimate; final player spawn may shift.");
-        result.put("spawnBiome",spawnBiome!=null?spawnBiome:surfaceBiome(seed,state,origin.getMiddleBlockX(),origin.getMiddleBlockZ()));
+        result.put("spawnAccuracy","World spawn point from base terrain. Each player appears on a random block within 10 blocks of it.");
+        result.put("spawnBiome",spawnBiome!=null?spawnBiome:surfaceBiome(seed,state,spawn[0],spawn[2]));
         if(slime>=0)result.put("slimeChunks",slime);
         return result;
     }

@@ -108,7 +108,6 @@ function shipTemplateName(template) {
 // Shipwreck templates are template files. For the other families the engine reads a trait from the built structure.
 const TRAITS = { inhabited: 'Inhabited', abandoned: 'Abandoned (zombie)', single: 'Single ruin', cluster: 'Cluster of ruins', basement: 'With basement', no_basement: 'No basement' };
 const templateName = (family, template) => family === 'shipwrecks' ? shipTemplateName(template) : TRAITS[template] || label(template);
-const templateTitle = family => ({ shipwrecks: 'Ship templates', villages: 'Inhabitants', ocean_ruins: 'Sizes', igloos: 'Basement options' })[family] || 'Templates';
 const familyName = key => ({ igloos: 'Igloos', villages: 'Villages', mineshafts: 'Mineshafts', ocean_ruins: 'Ocean ruins', shipwrecks: 'Shipwrecks', abandoned_camp: 'Abandoned camps', ruined_portals: 'Ruined portals (any size)', huge_ruined_portals: 'Huge ruined portals' })[key] || label(key);
 function variantName(family, detail) {
   if (family === 'mineshafts') return detail === 'mineshaft' ? 'Normal' : 'Badlands';
@@ -329,7 +328,7 @@ function renderFeatures() {
     if (kind === 'structure' && STRUCTURE_FAMILIES.includes(k)) {
       const count = familyKeys(k).filter(v => chosen.has(`structure:${v}`)).length;
       const filters = familyFilterDescription(chosen.get(`structure:${k}`));
-      return `<div class="feature category-feature ${count ? 'selected' : ''}"><button type="button" class="category-toggle" data-category="${esc(k)}" aria-pressed="${count > 0}">${glyph('structure', k)}<span class="name">${esc(familyName(k))}<small>${esc(filters || (chosen.has(`structure:${k}`) || !count ? 'All variants' : `${count} selected`))}</small></span></button><button type="button" class="subcategory-arrow" data-subcategories="${esc(k)}" aria-label="Choose ${esc(familyName(k))} subcategories" title="Choose subcategories">${icon('chevron')}</button></div>`;
+      return `<div class="feature category-feature ${count ? 'selected' : ''}"><button type="button" class="category-toggle" data-category="${esc(k)}" aria-pressed="${count > 0}">${glyph('structure', k)}<span class="name">${esc(familyName(k))}<small>${esc(filters || (chosen.has(`structure:${k}`) || !count ? 'Any type' : `${count} selected`))}</small></span></button><button type="button" class="subcategory-arrow" data-subcategories="${esc(k)}" aria-label="Narrow ${esc(familyName(k))}" title="Narrow by type">${icon('sliders')}</button></div>`;
     }
     const selected = chosen.has(`${kind}:${k}`);
     return `<label class="feature ${selected ? 'selected' : ''}"><input type="checkbox" data-key="${esc(k)}" ${selected ? 'checked' : ''}>${glyph(kind, k)}<span class="name">${esc(label(k))}</span>${icon('check', 'tick')}</label>`;
@@ -426,57 +425,82 @@ $('features').onclick = e => {
 };
 
 let subcategoryContext = null;
+// A ship template is a shape in one of six states; the chooser shows a row per state with the shapes as short picks.
+const SHIP_SHAPES = ['With mast', 'Whole', 'Front half', 'Back half'];
+function shipParts(template) {
+  const name = template.split('/').pop(), degraded = name.endsWith('_degraded');
+  const shape = name.startsWith('with_mast') ? 'With mast' : name.includes('_fronthalf') ? 'Front half' : name.includes('_backhalf') ? 'Back half' : 'Whole';
+  const orientation = name.startsWith('upsidedown') ? 'Upside down' : name.startsWith('sideways') ? 'Sideways' : 'Upright';
+  return { shape, row: `${orientation}${degraded ? ', degraded' : ''}`, order: ['Upright', 'Sideways', 'Upside down'].indexOf(orientation) * 2 + (degraded ? 1 : 0) };
+}
+// The choices a structure family offers, in groups. Within a group any lit pick counts, and with none lit all do.
+// Groups combine: a structure has to satisfy every group that is narrowed.
+function subcategoryGroups(family, mode) {
+  const variants = familyVariants(family).map(key => ({ value: catalog.variantDetails[key], name: variantName(family, catalog.variantDetails[key]) }));
+  // A family with one variant (igloos) has nothing to choose there.
+  const groups = variants.length > 1 ? [{ title: isPortalFamily(family) || family === 'abandoned_camp' ? 'Biome' : family === 'villages' ? 'Style' : 'Type', field: 'variants', options: variants }] : [];
+  if (isPortalFamily(family)) groups.push({ title: 'Placement', field: 'placements', options: PORTAL_PLACEMENTS.filter(p => catalog?.sets.includes(`${family}_${p}`)).map(p => ({ value: p, name: label(p) })) });
+  if (family === 'shipwrecks' && mode === 'find') groups.push({ title: 'In the water', note: 'predicted', field: 'placements', options: (catalog?.structurePlacements?.shipwrecks || []).map(p => ({ value: p, name: placementName(family, p) })) });
+  // Map markers are only built for shipwrecks, so the other families' traits can filter a search but not a layer.
+  const templates = mode === 'find' || family === 'shipwrecks' ? familyTemplates(family) : [];
+  if (templates.length) groups.push({ title: { shipwrecks: 'Ship', villages: 'Inhabitants', ocean_ruins: 'Size', igloos: 'Basement' }[family] || 'Template', field: 'templates',
+    options: family !== 'shipwrecks' ? templates.map(t => ({ value: t, name: templateName(family, t) }))
+      : templates.map(t => ({ value: t, ...shipParts(t) })).sort((a, b) => a.order - b.order || SHIP_SHAPES.indexOf(a.shape) - SHIP_SHAPES.indexOf(b.shape)).map(p => ({ value: p.value, name: p.shape, row: p.row, title: shipTemplateName(p.value) })) });
+  return groups;
+}
+const subcategoryConfig = () => subcategoryContext.mode === 'find' ? chosen.get(`structure:${subcategoryContext.family}`) : worldMap.features().find(f => f.key === subcategoryContext.family);
 function openSubcategories(family, mode) {
   if (mode === 'find') { commitConditionFields(); mergeFamilyConditions(family, true); renderFeatures(); renderChosen(); save(); }
   subcategoryContext = { family, mode };
   $('subcategory-title').textContent = familyName(family);
-  $('subcategory-hint').textContent = (mode === 'find' ? 'Selected variants are alternatives in one search condition. For portals, biome and placement must match the same portal.' : isPortalFamily(family) ? 'Choose which portals appear on the map. Biome and placement filters apply together.' : 'Choose which variants appear on the map.') + (isPortalFamily(family) ? ' Placement names are Minecraft generation types: swamp portals use “On ocean floor” even on dry land.' : '');
-  if (family === 'shipwrecks') $('subcategory-hint').textContent = mode === 'find' ? 'Type, water placement and template must match the same ship. Floating requires a dry deck, water around the hull and no seabed contact. Placement is predicted from base terrain; ice and completed-world details may differ. These rare placements need wider searches.' : 'Choose ship types and templates. Water placement is checked when inspecting a ship or filtering a search.';
+  $('subcategory-hint').textContent = family === 'shipwrecks' && mode === 'find' ? 'The water placement is predicted from base terrain; ice and finished-world details can differ. Floating and beached ships are rare and need wider searches.'
+    : isPortalFamily(family) ? 'Placement names are the game’s own: swamp portals count as “On ocean floor” even on dry land.' : '';
+  $('subcategory-hint').hidden = !$('subcategory-hint').textContent;
   renderSubcategories();
   $('subcategory-dialog').showModal();
 }
 function renderSubcategories() {
-  const { family, mode } = subcategoryContext, config = mode === 'find' ? chosen.get(`structure:${family}`) : worldMap.features().find(f => f.key === family) || {};
-  $('subcategory-options').classList.toggle('portal-options', isPortalFamily(family));
-  const variants = familyVariants(family).map(key => ({ key, value: catalog.variantDetails[key], name: variantName(family, catalog.variantDetails[key]) }));
-  // A family with one variant (igloos) has nothing to choose there.
-  const groups = variants.length > 1 ? [{ title: isPortalFamily(family) ? 'Biome variants' : family === 'shipwrecks' ? 'Location types' : 'Variants', field: 'variants', options: variants }] : [];
-  if (isPortalFamily(family)) groups.push({ title: 'Placements', field: 'placements', options: PORTAL_PLACEMENTS.filter(p => catalog?.sets.includes(`${family}_${p}`)).map(p => ({ key: `${family}_${p}`, value: p, name: label(p) })) });
-  if (family === 'shipwrecks' && mode === 'find') groups.push({ title: 'Water placement (predicted)', field: 'placements', options: (catalog?.structurePlacements?.shipwrecks || []).map(p => ({ key: family, value: p, name: placementName(family, p) })) });
-  // Map markers are only built for shipwrecks, so the other families' traits can filter a search but not a layer.
-  const templates = mode === 'find' || family === 'shipwrecks' ? familyTemplates(family) : [];
-  if (templates.length) groups.push({ title: templateTitle(family), field: 'templates', options: templates.map(t => ({ key: family, value: t, name: templateName(family, t) })) });
-  const option = (name, key, field, value, checked) => `<label class="subcategory-option"><input type="checkbox" data-subkey="${esc(key)}" data-subfield="${field}" value="${esc(value)}" ${checked ? 'checked' : ''}><span>${esc(name)}</span></label>`;
-  const selected = (field, value) => !!config && (!Array.isArray(config[field]) || (value === '*' ? groups.find(g => g.field === field).options.every(o => config[field].includes(o.value)) : config[field].includes(value)));
-  $('subcategory-options').innerHTML = (mode === 'find' ? option(family === 'shipwrecks' ? 'Any type, placement or template' : templates.length ? `Any ${familyName(family).toLowerCase()}` : isPortalFamily(family) ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && SUBCATEGORY_FILTERS.every(field => !config[field])) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
+  const { family, mode } = subcategoryContext, config = subcategoryConfig(), groups = subcategoryGroups(family, mode);
+  const narrowed = g => Array.isArray(config?.[g.field]);
+  const pick = (g, o) => `<button type="button" class="pick ${narrowed(g) && config[g.field].includes(o.value) ? 'on' : ''}" data-subfield="${g.field}" data-subvalue="${esc(o.value)}" aria-pressed="${narrowed(g) && config[g.field].includes(o.value)}" ${o.title ? `title="${esc(o.title)}"` : ''}>${esc(o.name)}</button>`;
+  $('subcategory-options').innerHTML = groups.map(g => {
+    const rows = [...new Set(g.options.map(o => o.row || ''))];
+    return `<section class="sub-group"><div class="sub-group-head"><h4>${g.title}${g.note ? `<small>${g.note}</small>` : ''}</h4><button type="button" class="pick any ${config && !narrowed(g) ? 'on' : ''}" data-subfield="${g.field}" data-subvalue="*" aria-pressed="${!!config && !narrowed(g)}">Any</button></div>
+      ${rows.map(row => `<div class="${row ? 'pick-row' : ''}">${row ? `<span>${esc(row)}</span>` : ''}<div class="picks">${g.options.filter(o => (o.row || '') === row).map(o => pick(g, o)).join('')}</div></div>`).join('')}</section>`;
+  }).join('');
+  const filters = familyFilterDescription(config), any = `any ${familyName(family).toLowerCase()}`;
+  $('subcategory-summary').textContent = mode === 'find' ? (config ? `Searching for: ${filters || any}` : 'Not in the search yet. Pick anything below to add it.') : `On the map: ${config?.on ? filters || any : 'hidden'}`;
+  $('subcategory-reset').hidden = !config || !SUBCATEGORY_FILTERS.some(field => Array.isArray(config[field]));
+  $('subcategory-remove').hidden = mode !== 'find' || !config;
 }
-$('subcategory-options').onchange = e => {
-  const el = e.target.closest('[data-subkey]'); if (!el || !subcategoryContext) return;
+// Applies a change to the family's filters: a search condition in Find, a map layer in Layers.
+function setSubcategoryFilters(change) {
   const { family, mode } = subcategoryContext;
   if (mode === 'find') {
-    const id = `structure:${family}`, current = chosen.get(id), field = el.dataset.subfield;
-    if (el.checked && !current && chosen.size >= 12) { el.checked = false; toast('Choose up to 12 search conditions.', true); return; }
-    if (field === 'any') {
-      if (el.checked) { const next = { ...(current || condition('structure', family)) }; for (const field of SUBCATEGORY_FILTERS) delete next[field]; chosen.set(id, next); }
-      else chosen.delete(id);
-    } else {
-      const options = [...$('subcategory-options').querySelectorAll(`[data-subfield="${field}"]`)].filter(o => o.value !== '*');
-      const values = el.value === '*' ? (el.checked ? options.map(o => o.value) : []) : options.filter(o => o.checked).map(o => o.value);
-      const next = { ...(current || condition('structure', family)) };
-      if (values.length === options.length) delete next[field]; else next[field] = values;
-      chosen.set(id, next);
-    }
+    const id = `structure:${family}`, current = chosen.get(id);
+    if (!current && chosen.size >= 12) return toast('Choose up to 12 search conditions.', true);
+    const next = { ...(current || condition('structure', family)) };
+    for (const [field, values] of Object.entries(change)) if (values) next[field] = values; else delete next[field];
+    chosen.set(id, next);
     renderFeatures(); renderChosen(); save();
   } else {
-    const field = el.dataset.subfield, options = [...$('subcategory-options').querySelectorAll(`[data-subfield="${field}"]`)].filter(o => o.value !== '*');
-    const config = worldMap.features().find(f => f.key === family);
-    const values = el.value === '*' ? (el.checked ? options.map(o => o.value) : []) : options.filter(o => o.checked).map(o => o.value);
-    worldMap.setFeature(family, { [field]: values, on: values.length > 0 && SUBCATEGORY_FILTERS.every(other => other === field || config[other]?.length !== 0) });
+    worldMap.setFeature(family, { ...change, on: true });
     presetChanged(); renderLayers();
   }
+}
+$('subcategory-options').onclick = e => {
+  const el = e.target.closest('[data-subfield]'); if (!el || !subcategoryContext) return;
+  const field = el.dataset.subfield, value = el.dataset.subvalue, config = subcategoryConfig();
+  const all = subcategoryGroups(subcategoryContext.family, subcategoryContext.mode).find(g => g.field === field).options.map(o => o.value);
+  const current = Array.isArray(config?.[field]) ? config[field] : [];
+  // Unlighting the last pick, or lighting every one, is the same as Any.
+  const values = value === '*' ? [] : current.includes(value) ? current.filter(v => v !== value) : all.filter(v => v === value || current.includes(v));
+  setSubcategoryFilters({ [field]: values.length && values.length < all.length ? values : null });
   renderSubcategories();
-  $('subcategory-options').querySelector(`[data-subfield="${CSS.escape(el.dataset.subfield)}"][value="${CSS.escape(el.value)}"]`)?.focus({ preventScroll: true });
+  $('subcategory-options').querySelector(`[data-subfield="${field}"][data-subvalue="${CSS.escape(value)}"]`)?.focus({ preventScroll: true });
 };
+$('subcategory-reset').onclick = () => { setSubcategoryFilters({ variants: null, placements: null, templates: null }); renderSubcategories(); };
+$('subcategory-remove').onclick = () => { chosen.delete(`structure:${subcategoryContext.family}`); renderFeatures(); renderChosen(); save(); renderSubcategories(); };
 for (const id of ['subcategory-close', 'subcategory-done']) $(id).onclick = () => $('subcategory-dialog').close();
 $('subcategory-dialog').onclick = e => { if (e.target === e.currentTarget) { const box = e.currentTarget.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) e.currentTarget.close(); } };
 $('chosen').onchange = e => {
@@ -691,7 +715,7 @@ function renderResults() {
     return `<article class="result ${r.seed === selectedSeed ? 'active' : ''}" data-seed="${esc(r.seed)}" tabindex="0" role="button" aria-label="Open seed ${esc(r.seed)} on the map">
       <div class="result-top"><code>${esc(r.seed)}</code><span class="card-actions"><button class="icon-btn ${savedEntry(r.seed) ? 'active' : ''}" data-save="${esc(r.seed)}" title="${savedEntry(r.seed) ? 'Saved. Show it in Saved seeds' : 'Save this seed with notes'}" aria-label="Save seed ${esc(r.seed)}">${icon('bookmark')}</button><button class="btn small" data-copy="${esc(r.seed)}">${icon('copy')}Copy</button></span></div>
       <div class="chips">${r.features.map((f, i) => `<button class="chip" data-feature="${i}" title="Show this ${esc(label(f.key).toLowerCase())} on the map">${featureChip(f)}</button>`).join('') || '<span class="chip plain">Opened without search conditions</span>'}</div>
-      <div class="result-meta">${icon('spawn')}Spawn ${r.spawnX}, ${r.spawnZ}${r.spawnBiome ? ` in ${esc(label(r.spawnBiome).toLowerCase())}` : ''}${r.slimeChunks != null ? ` · ${r.slimeChunks} slime chunks nearby` : ''}${r.anchorX !== r.spawnX || r.anchorZ !== r.spawnZ ? ` · measured from ${r.anchorX}, ${r.anchorZ}` : ''}${manual ? ' · added by you' : ''}${r.fromCatalogue ? ' · from your catalogue' : ''}</div>
+      <div class="result-meta" title="The world spawn point. Each player appears on a random block within 10 blocks of it.">${icon('spawn')}Spawn ${r.spawnX}, ${r.spawnZ}${r.spawnBiome ? ` in ${esc(label(r.spawnBiome).toLowerCase())}` : ''}${r.slimeChunks != null ? ` · ${r.slimeChunks} slime chunks nearby` : ''}${(r.anchor ? r.anchor === 'custom' : r.anchorX !== r.spawnX || r.anchorZ !== r.spawnZ) ? ` · measured from ${r.anchorX}, ${r.anchorZ}` : ''}${manual ? ' · added by you' : ''}${r.fromCatalogue ? ' · from your catalogue' : ''}</div>
     </article>`;
   }).join('') || `<div class="empty">${icon('list')}<h4>No worlds yet</h4><p>Matching seeds appear here as they’re found. Distances are in blocks.</p></div>`;
 }
@@ -906,7 +930,7 @@ function renderLayers() {
   document.querySelector('.master [data-layer]').checked = worldMap.layers.structures;
   $('feature-layers').classList.toggle('off', !worldMap.layers.structures);
   $('feature-layers').innerHTML = worldMap.features().map(f => `<div class="feature-layer" data-row="${esc(f.key)}">
-    ${STRUCTURE_FAMILIES.includes(f.key) && familyVariants(f.key).length > 1 ? `<button type="button" class="layer-category" data-layer-category="${esc(f.key)}" aria-pressed="${f.on}">${glyph('structure', f.key)}<span class="toggle-text"><b>${esc(familyName(f.key))}</b><small></small></span></button><button type="button" class="subcategory-arrow" data-layer-subcategories="${esc(f.key)}" aria-label="Choose ${esc(familyName(f.key))} subcategories" title="Choose subcategories">${icon('chevron')}</button>` : `${glyph('structure', f.key)}<span class="toggle-text"><b>${esc(label(f.key))}</b><small></small></span>`}
+    ${STRUCTURE_FAMILIES.includes(f.key) && familyVariants(f.key).length > 1 ? `<button type="button" class="layer-category" data-layer-category="${esc(f.key)}" aria-pressed="${f.on}">${glyph('structure', f.key)}<span class="toggle-text"><b>${esc(familyName(f.key))}</b><small></small></span></button><button type="button" class="subcategory-arrow" data-layer-subcategories="${esc(f.key)}" aria-label="Narrow ${esc(familyName(f.key))}" title="Narrow by type">${icon('sliders')}</button>` : `${glyph('structure', f.key)}<span class="toggle-text"><b>${esc(label(f.key))}</b><small></small></span>`}
     <select data-from="${esc(f.key)}" title="Zoom level ${esc(label(f.key))} appears at" aria-label="Zoom level ${esc(label(f.key))} appears at">${worldMap.ZOOM_STOPS.map(stop => `<option value="${stop}" ${stop === f.from ? 'selected' : ''}>${zoomName(stop)}</option>`).join('')}</select>
     <label class="switch-wrap"><input type="checkbox" data-feature="${esc(f.key)}" ${f.on ? 'checked' : ''} aria-label="Show ${esc(label(f.key))}"><i class="switch"></i></label>
   </div>`).join('');
