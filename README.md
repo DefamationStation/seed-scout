@@ -72,6 +72,12 @@ that feed at start and every four hours and asks whether to update. Yes download
 No is remembered, and nothing is offered again until you update from *Help → Check for updates…*. Both are read without signing in,
 so updates only work while the repository is public.
 
+The desktop shell has a self-test that answers its own dialogs and records what was shown:
+`"Seed Scout.exe" --selftest=full` (needs Minecraft; engine, a tile, About, What's new, the Settings links,
+import and the whole update conversation), `--selftest=nominecraft` and `--selftest=smoke`. Each writes
+`selftest.json` to its user data folder and exits with 0 when every check passed. The release workflow runs the
+smoke scenario on the packaged app and does not publish a build that fails it.
+
 ```powershell
 cd desktop
 npm install
@@ -79,6 +85,21 @@ npm start                                  # run from this checkout, using this 
 ./vendor.ps1 -Jdk <path to a JDK 25>       # fetch embeddable Python and build the trimmed Java runtime
 npm run dist                               # build the installer into desktop/dist
 ```
+
+## Conditions on the spawn
+
+Under *Search around* in Find:
+
+- **Spawn biome:** require the world spawn to be in one of a list of biomes, or keep it out of them. The biome
+  is read at the spawn-region position on the real terrain column, the same position results report as spawn.
+- **Slime chunks:** require at least N slime chunks in the square of chunks reaching R chunks (1–8) from the
+  search origin, with the game's own slime-chunk formula.
+- **Either / or:** a condition you want nearby can take up to four alternatives ("+ or…" on its row): another
+  structure or biome at the same distances. The condition holds when it or any alternative does; the first one
+  that holds, in the order listed, is the one reported. Alternatives are not available on conditions you avoid,
+  on ones measured from another condition, or on ones another condition is measured from.
+
+A search may consist of spawn conditions alone. These are tested first, since they cost the least.
 
 ## Minecraft version
 

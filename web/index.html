@@ -57,6 +57,14 @@
           <label class="field"><span>X</span><input id="x" type="number" value="0"></label>
           <label class="field"><span>Z</span><input id="z" type="number" value="0"></label>
         </div>
+        <div class="spawn-rules">
+          <label class="field"><span>Spawn biome</span><select id="spawn-biome-mode" aria-label="Spawn biome rule"><option value="any">Any biome</option><option value="in">Spawn in one of…</option><option value="not">Do not spawn in…</option></select></label>
+          <div id="spawn-biome-pick" hidden>
+            <div class="chips" id="spawn-biome-list"></div>
+            <select id="spawn-biome-add" aria-label="Add a spawn biome"></select>
+          </div>
+          <div class="criterion-rule slime-rule"><span>At least</span><input id="slime-count" type="number" min="0" max="289" value="0" aria-label="Slime chunks wanted"><span>slime chunks within</span><input id="slime-radius" type="number" min="1" max="8" value="5" aria-label="Chunks from the origin"><span>chunks <i>0 = off</i></span></div>
+        </div>
         <label class="field inline"><span>Default distance</span><span class="with-unit"><input id="radius" type="number" min="32" max="8000" step="100" value="1000"><i>blocks</i></span></label>
       </div>
 

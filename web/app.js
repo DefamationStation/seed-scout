@@ -203,6 +203,7 @@ $('saved-presets').onclick = e => {
   chosen.clear();
   for (const f of preset.chosen) if ((f.kind === 'structure' ? catalog.sets : catalog.biomes).includes(f.key)) chosen.set(`${f.kind}:${f.key}`, condition(f.kind, f.key, f));
   for (const [k, v] of Object.entries(preset.fields || {})) if (PRESET_FIELDS.includes(k) && $(k)) $(k).value = v;
+  Object.assign(spawnRules, { biomeMode: 'any', biomes: [], slimeCount: 0, slimeRadius: 5 }, preset.spawn || {}); renderSpawnRules();
   syncAnchor(); renderFeatures(); renderChosen(); save();
 };
 $('condition-preset-save').onclick = () => { commitConditionFields(); $('condition-preset-form').hidden = false; $('condition-preset-name').value = ''; $('condition-preset-name').focus(); };
@@ -211,10 +212,10 @@ $('condition-preset-form').onsubmit = e => {
   e.preventDefault();
   const name = $('condition-preset-name').value.trim();
   if (!name) return;
-  if (!chosen.size) return toast('Choose at least one feature first.', true);
+  if (!chosen.size && !spawnRulesActive()) return toast('Choose at least one feature or spawn condition first.', true);
   const all = conditionPresets().filter(p => p.name !== name);
   if (all.length >= 20) return toast('You can keep up to 20 presets. Delete one first.', true);
-  all.push({ name, chosen: [...chosen.values()], fields: Object.fromEntries(PRESET_FIELDS.map(k => [k, $(k).value])) });
+  all.push({ name, chosen: [...chosen.values()], fields: Object.fromEntries(PRESET_FIELDS.map(k => [k, $(k).value])), spawn: { ...spawnRules, biomes: [...spawnRules.biomes] } });
   localStorage.setItem('seed-scout-condition-presets', JSON.stringify(all));
   $('condition-preset-form').hidden = true; renderConditionPresets(); toast(`Preset "${name}" saved`);
 };
@@ -228,7 +229,7 @@ function queueEstimate() {
   estimateTimer = setTimeout(async () => {
     const token = ++estimateToken, line = $('estimate');
     let found = null;
-    try { if (catalog && chosen.size) found = await api('/api/estimate', request()); } catch { }
+    try { if (catalog && (chosen.size || spawnRulesActive())) found = await api('/api/estimate', request()); } catch { }
     if (token !== estimateToken) return;
     line.hidden = !found?.known;
     if (!found?.known) return;
@@ -301,9 +302,13 @@ function familyFilterDescription(f) {
 }
 const conditionName = f => `${label(f.key)}${familyFilterDescription(f) ? ` (${familyFilterDescription(f)})` : ''}`;
 // The starting seed is deliberately not remembered: left blank, every search starts from a new random seed.
-function save() { queueEstimate(); localStorage.setItem('seed-scout-settings', JSON.stringify({ defaults: 2, fields: Object.fromEntries(fields.filter(k => k !== 'seed').map(k => [k, $(k).value])), chosen: [...chosen.values()] })); }
+// Conditions on the spawn itself; restored with the other settings just below.
+const spawnRules = { biomeMode: 'any', biomes: [], slimeCount: 0, slimeRadius: 5 };
+const spawnRulesActive = () => (spawnRules.biomeMode !== 'any' && spawnRules.biomes.length > 0) || spawnRules.slimeCount > 0;
+function save() { queueEstimate(); localStorage.setItem('seed-scout-settings', JSON.stringify({ defaults: 2, fields: Object.fromEntries(fields.filter(k => k !== 'seed').map(k => [k, $(k).value])), chosen: [...chosen.values()], spawn: spawnRules })); }
 try {
   const saved = JSON.parse(localStorage.getItem('seed-scout-settings'));
+  if (saved?.spawn) Object.assign(spawnRules, { biomeMode: ['in', 'not'].includes(saved.spawn.biomeMode) ? saved.spawn.biomeMode : 'any', biomes: Array.isArray(saved.spawn.biomes) ? saved.spawn.biomes : [], slimeCount: Number(saved.spawn.slimeCount) || 0, slimeRadius: Number(saved.spawn.slimeRadius) || 5 });
   // The default seed budget rose from 100,000 to 1,000,000; a saved value that is just the old default follows it.
   if (saved && saved.defaults !== 2 && saved.fields.limit === '100000') delete saved.fields.limit;
   if (saved) { for (const [k, v] of Object.entries(saved.fields)) if ($(k) && k !== 'seed') $(k).value = v; for (const f of saved.chosen) chosen.set(`${f.kind}:${f.key}`, condition(f.kind, f.key, f)); }
@@ -330,6 +335,8 @@ function renderFeatures() {
 }
 function renderChosen() {
   for (const f of chosen.values()) if (f.near && !canAnchor(chosen.get(f.near))) f.near = '';
+  // Alternatives only make sense for a plain "near the origin" condition that nothing else is measured from.
+  for (const [id, f] of chosen) if (f.or && (f.mode === 'exclude' || f.near || isAnchor(id))) delete f.or;
   $('selection-count').textContent = `${chosen.size} selected`;
   const number = (id, field, value, min, max, name) => `<input type="number" data-field="${field}" data-id="${esc(id)}" value="${value}" min="${min}" max="${max}" step="${field === 'count' ? 1 : 50}" aria-label="${name}">`;
   $('chosen').innerHTML = [...chosen.entries()].map(([id, f]) => {
@@ -338,19 +345,22 @@ function renderChosen() {
     const rule = (avoid
       ? `<span>none within</span>${number(id, 'radius', f.radius, 32, 8000, `Distance to keep clear of ${name}`)}<span>blocks</span>`
       : `${f.kind === 'structure' ? `${number(id, 'count', f.count, 1, 10, `How many ${name}`)}<span>or more,</span>` : ''}${number(id, 'minRadius', f.minRadius, 0, 7968, `Minimum distance for ${name}`)}<span>to</span>${number(id, 'radius', f.radius, 32, 8000, `Maximum distance for ${name}`)}<span>blocks</span>`) + origin;
+    const others = avoid || f.near || isAnchor(id) ? null : (f.or || []);
+    const pick = (kind, keys) => keys.filter(k => !(kind === f.kind && k === f.key) && !others.some(o => o.kind === kind && o.key === k)).sort((a, b) => label(a).localeCompare(label(b))).map(k => `<option value="${kind}:${esc(k)}">${esc(label(k))}</option>`).join('');
+    const either = !others ? '' : `<div class="criterion-or">${others.map((o, i) => `<span>or</span><span class="chip">${glyph(o.kind, o.key)}${esc(label(o.key))}<button data-or-remove="${i}" data-id="${esc(id)}" aria-label="Remove alternative ${esc(label(o.key))}">×</button></span>`).join('')}${others.length < 4 && catalog ? `<select data-or-add data-id="${esc(id)}" aria-label="Add an alternative to ${name}"><option value="">+ or…</option><optgroup label="Structures">${pick('structure', catalog.sets.filter(rootStructure))}</optgroup><optgroup label="Biomes">${pick('biome', catalog.biomes)}</optgroup></select>` : ''}</div>`;
     return `<div class="criterion ${avoid ? 'avoid' : ''}">
       <div class="criterion-top">${glyph(f.kind, f.key)}<span class="name">${name}</span>
         <span class="mini-seg" role="group" aria-label="Condition for ${name}"><button type="button" data-mode="within" data-id="${esc(id)}" class="${avoid ? '' : 'active'}">Near</button><button type="button" data-mode="exclude" data-id="${esc(id)}" class="${avoid ? 'active' : ''}">Avoid</button></span>
         <button class="icon-btn" data-remove="${esc(id)}" aria-label="Remove ${name}">${icon('x')}</button></div>
-      <div class="criterion-rule">${rule}</div>
+      <div class="criterion-rule">${rule}</div>${either}
     </div>`;
   }).join('') || '<p class="hint">Nothing selected yet. Tick a structure or biome above.</p>';
   syncButtons();
 }
 function syncButtons() {
   const emptyFilter = [...chosen.values()].some(f => SUBCATEGORY_FILTERS.some(field => f[field]?.length === 0));
-  $('start').disabled = !catalog || state.running || !chosen.size || emptyFilter;
-  $('inspect').disabled = !catalog || !chosen.size || emptyFilter;
+  $('start').disabled = !catalog || state.running || (!chosen.size && !spawnRulesActive()) || emptyFilter;
+  $('inspect').disabled = !catalog || (!chosen.size && !spawnRulesActive()) || emptyFilter;
 }
 function updateConditionField(el) {
   const f = chosen.get(el.dataset.id); if (!f) return;
@@ -366,9 +376,28 @@ function commitConditionFields() {
   inputs.sort((a, b) => Number(a.dataset.field === 'minRadius') - Number(b.dataset.field === 'minRadius'));
   for (const el of inputs) updateConditionField(el);
 }
+// ---- Conditions on the spawn itself ---------------------------------------
+// The biome the world spawn is in, and slime chunks around the search origin. Both are tested before any feature.
+function renderSpawnRules() {
+  $('spawn-biome-mode').value = spawnRules.biomeMode;
+  $('spawn-biome-pick').hidden = spawnRules.biomeMode === 'any';
+  $('spawn-biome-list').innerHTML = spawnRules.biomes.map(b => `<span class="chip">${glyph('biome', b)}${esc(label(b))}<button data-spawn-biome="${esc(b)}" aria-label="Remove ${esc(label(b))}">×</button></span>`).join('');
+  $('spawn-biome-add').innerHTML = `<option value="">Add a biome…</option>${(catalog?.biomes || []).filter(b => !spawnRules.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}`;
+  $('slime-count').value = spawnRules.slimeCount; $('slime-radius').value = spawnRules.slimeRadius;
+}
+$('spawn-biome-mode').onchange = () => { spawnRules.biomeMode = $('spawn-biome-mode').value; renderSpawnRules(); syncButtons(); save(); };
+$('spawn-biome-add').onchange = () => { const b = $('spawn-biome-add').value; if (b && spawnRules.biomes.length < 30) spawnRules.biomes.push(b); renderSpawnRules(); syncButtons(); save(); };
+$('spawn-biome-list').onclick = e => { const b = e.target.closest('[data-spawn-biome]'); if (!b) return; spawnRules.biomes = spawnRules.biomes.filter(x => x !== b.dataset.spawnBiome); renderSpawnRules(); syncButtons(); save(); };
+for (const id of ['slime-count', 'slime-radius']) $(id).onchange = () => {
+  spawnRules.slimeRadius = Math.max(1, Math.min(8, Math.round(Number($('slime-radius').value) || 5)));
+  spawnRules.slimeCount = Math.max(0, Math.min((2 * spawnRules.slimeRadius + 1) ** 2, Math.round(Number($('slime-count').value) || 0)));
+  renderSpawnRules(); syncButtons(); save();
+};
 const request = () => {
   commitConditionFields();
-  return { ...Object.fromEntries(fields.map(k => [k, $(k).value])), features: [...chosen.entries()].map(([id, f]) => ({ ...f, id, near: f.near || undefined })) };
+  return { ...Object.fromEntries(fields.map(k => [k, $(k).value])), features: [...chosen.entries()].map(([id, f]) => ({ ...f, id, near: f.near || undefined })),
+    ...(spawnRules.biomeMode !== 'any' && spawnRules.biomes.length ? { spawnBiomes: spawnRules.biomes, spawnBiomeMode: spawnRules.biomeMode } : {}),
+    ...(spawnRules.slimeCount > 0 ? { slime: { count: spawnRules.slimeCount, radius: spawnRules.slimeRadius } } : {}) };
 };
 
 $('features').onchange = e => {
@@ -449,11 +478,18 @@ $('subcategory-dialog').onclick = e => { if (e.target === e.currentTarget) { con
 $('chosen').onchange = e => {
   const near = e.target.closest('[data-near]');
   if (near) { chosen.get(near.dataset.id).near = near.value; renderChosen(); save(); return; }
+  const or = e.target.closest('[data-or-add]');
+  if (or) {
+    if (or.value) { const f = chosen.get(or.dataset.id), [kind, key] = or.value.split(':'); f.or = [...(f.or || []), { kind, key }].slice(0, 4); }
+    renderChosen(); save(); return;
+  }
   const el = e.target.closest('[data-field]'); if (!el) return;
   updateConditionField(el);
   renderChosen(); save();
 };
 $('chosen').onclick = e => {
+  const alternative = e.target.closest('[data-or-remove]');
+  if (alternative) { const f = chosen.get(alternative.dataset.id); f.or.splice(Number(alternative.dataset.orRemove), 1); if (!f.or.length) delete f.or; renderChosen(); save(); return; }
   const remove = e.target.closest('[data-remove]'), mode = e.target.closest('[data-mode]');
   if (remove) { chosen.delete(remove.dataset.remove); renderChosen(); renderFeatures(); save(); }
   else if (mode) {
@@ -576,7 +612,7 @@ function renderResults() {
     return `<article class="result ${r.seed === selectedSeed ? 'active' : ''}" data-seed="${esc(r.seed)}" tabindex="0" role="button" aria-label="Open seed ${esc(r.seed)} on the map">
       <div class="result-top"><code>${esc(r.seed)}</code><span class="card-actions"><button class="icon-btn ${savedEntry(r.seed) ? 'active' : ''}" data-save="${esc(r.seed)}" title="${savedEntry(r.seed) ? 'Saved. Show it in Saved seeds' : 'Save this seed with notes'}" aria-label="Save seed ${esc(r.seed)}">${icon('bookmark')}</button><button class="btn small" data-copy="${esc(r.seed)}">${icon('copy')}Copy</button></span></div>
       <div class="chips">${r.features.map((f, i) => `<button class="chip" data-feature="${i}" title="Show this ${esc(label(f.key).toLowerCase())} on the map">${featureChip(f)}</button>`).join('') || '<span class="chip plain">Opened without search conditions</span>'}</div>
-      <div class="result-meta">${icon('spawn')}Spawn ${r.spawnX}, ${r.spawnZ}${r.anchorX !== r.spawnX || r.anchorZ !== r.spawnZ ? ` · measured from ${r.anchorX}, ${r.anchorZ}` : ''}${manual ? ' · added by you' : ''}${r.fromCatalogue ? ' · from your catalogue' : ''}</div>
+      <div class="result-meta">${icon('spawn')}Spawn ${r.spawnX}, ${r.spawnZ}${r.spawnBiome ? ` in ${esc(label(r.spawnBiome).toLowerCase())}` : ''}${r.slimeChunks != null ? ` · ${r.slimeChunks} slime chunks nearby` : ''}${r.anchorX !== r.spawnX || r.anchorZ !== r.spawnZ ? ` · measured from ${r.anchorX}, ${r.anchorZ}` : ''}${manual ? ' · added by you' : ''}${r.fromCatalogue ? ' · from your catalogue' : ''}</div>
     </article>`;
   }).join('') || `<div class="empty">${icon('list')}<h4>No worlds yet</h4><p>Matching seeds appear here as they’re found. Distances are in blocks.</p></div>`;
 }
@@ -963,7 +999,7 @@ async function poll() {
     $('empty-text').textContent = 'Choose features on the left and start a search, open any seed from the bar above, or start with one of these.';
     $('empty-actions').hidden = false;
     $('empty-hint').textContent = `Using ${versionName(catalog.version)} from your Minecraft install.${navigator.userAgent.includes('Electron') ? ' To bring saved seeds from another copy, use File → Import saved seeds and catalogue.' : ''}`;
-    restoreLastView(); queueEstimate();
+    renderSpawnRules(); restoreLastView(); queueEstimate();
   }
   if (state.running && !fresh.running && !fresh.error) {
     // A search that ran for a while, or finished while the window was out of sight, is announced by the system too.
@@ -991,5 +1027,5 @@ async function poll() {
   if (state.error) notice(state.error, true);
   renderResults();
 }
-syncAnchor(); renderLayers(); renderPresets(); renderConditionPresets(); renderChosen(); openPanel('find', true); loadSaved().then(loadCatalogue); poll();
+syncAnchor(); renderLayers(); renderPresets(); renderConditionPresets(); renderSpawnRules(); renderChosen(); openPanel('find', true); loadSaved().then(loadCatalogue); poll();
 const timer = setInterval(poll, 1000);

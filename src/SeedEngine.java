@@ -324,13 +324,33 @@ public final class SeedEngine {
     }
     // exclude: the seed passes only when nothing matches; otherwise it needs count matches between minRadius and radius.
     // near names the id of another condition: this one is then measured from each of that condition's matches.
-    record Feature(String kind,String key,int radius,int minRadius,int count,boolean exclude,String id,String near,List<String> variants,List<String> placements,List<String> templates) {}
+    record Feature(String kind,String key,int radius,int minRadius,int count,boolean exclude,String id,String near,List<String> variants,List<String> placements,List<String> templates,List<Feature> or) {}
+    // "or" lists alternatives that satisfy the same condition: another structure or biome at the same distances.
+    static List<Feature> alternatives(JsonObject f) {
+        var result=new ArrayList<Feature>();
+        if(f.has("or")&&!f.get("or").isJsonNull())for(var item:f.getAsJsonArray("or")) {
+            var alt=item.getAsJsonObject();
+            result.add(new Feature(alt.get("kind").getAsString(),alt.get("key").getAsString(),f.get("radius").getAsInt(),f.has("minRadius")?f.get("minRadius").getAsInt():0,f.has("count")?f.get("count").getAsInt():1,false,null,null,List.of(),List.of(),List.of(),List.of()));
+        }
+        return result;
+    }
+    // The surface biome at a block position, as the game resolves it.
+    static String surfaceBiome(long seed,RandomState state,int x,int z) {
+        var manager=new BiomeManager(generator.getBiomeSource().createUncachedResolver(state),BiomeManager.obfuscateSeed(seed));
+        return manager.getBiome(x,generator.getBaseColumn(x,z,heights,state).topBlockY(),z).unwrapKey().orElseThrow().identifier().getPath();
+    }
+    // Slime chunks in the square of chunks reaching "radius" chunks from the one holding the block position.
+    static int slimeChunks(long seed,int x,int z,int radius) {
+        int count=0,cx=x>>4,cz=z>>4;
+        for(int dx=-radius;dx<=radius;dx++)for(int dz=-radius;dz<=radius;dz++)if(WorldgenRandom.seedSlimeChunk(cx+dx,cz+dz,seed,987234911L).nextInt(10)==0)count++;
+        return count;
+    }
     static List<String> filterValues(JsonObject f,String key) {
         return f.has(key)&&!f.get(key).isJsonNull()?StreamSupport.stream(f.getAsJsonArray(key).spliterator(),false).map(JsonElement::getAsString).toList():List.of();
     }
     static List<Feature> parseFeatures(JsonArray wanted) {
         var result=new ArrayList<Feature>();
-        for(var item:wanted) {var f=item.getAsJsonObject();result.add(new Feature(f.get("kind").getAsString(),f.get("key").getAsString(),f.get("radius").getAsInt(),f.has("minRadius")?f.get("minRadius").getAsInt():0,f.has("count")?f.get("count").getAsInt():1,f.has("mode")&&f.get("mode").getAsString().equals("exclude"),f.has("id")?f.get("id").getAsString():null,f.has("near")?f.get("near").getAsString():null,filterValues(f,"variants"),filterValues(f,"placements"),filterValues(f,"templates")));}
+        for(var item:wanted) {var f=item.getAsJsonObject();result.add(new Feature(f.get("kind").getAsString(),f.get("key").getAsString(),f.get("radius").getAsInt(),f.has("minRadius")?f.get("minRadius").getAsInt():0,f.has("count")?f.get("count").getAsInt():1,f.has("mode")&&f.get("mode").getAsString().equals("exclude"),f.has("id")?f.get("id").getAsString():null,f.has("near")?f.get("near").getAsString():null,filterValues(f,"variants"),filterValues(f,"placements"),filterValues(f,"templates"),alternatives(f)));}
         // Reject rare structures before scanning thousands of biome points.
         result.sort(Comparator.comparingInt((Feature f)->f.kind.equals("biome")?1:0).thenComparingInt(Feature::radius));
         return result;
@@ -347,26 +367,45 @@ public final class SeedEngine {
         if(origin==null)return null;
         int x=request.has("anchor") && request.get("anchor").getAsString().equals("custom")?request.get("x").getAsInt():origin.getMiddleBlockX();
         int z=request.has("anchor") && request.get("anchor").getAsString().equals("custom")?request.get("z").getAsInt():origin.getMiddleBlockZ();
+        // Conditions on the spawn itself are the cheapest, so they are tested before any structure or biome scan.
+        String spawnBiome=null;int slime=-1;
+        if(request.has("spawnBiomes")) {
+            spawnBiome=surfaceBiome(seed,state,origin.getMiddleBlockX(),origin.getMiddleBlockZ());
+            boolean listed=false;for(var item:request.getAsJsonArray("spawnBiomes"))listed|=item.getAsString().equals(spawnBiome);
+            if(listed==(request.has("spawnBiomeMode")&&request.get("spawnBiomeMode").getAsString().equals("not")))return null;
+        }
+        if(request.has("slime")) {
+            var rule=request.getAsJsonObject("slime");slime=slimeChunks(seed,x,z,rule.get("radius").getAsInt());
+            if(slime<rule.get("count").getAsInt())return null;
+        }
         var structState=ChunkGeneratorStructureState.createForNormal(state,seed,origin,generator.getBiomeSource(),access.lookupOrThrow(Registries.STRUCTURE_SET));
-        var groups=new ArrayList<List<Map<String,Object>>>();
+        var groups=new ArrayList<List<Map<String,Object>>>();var chosen=new Feature[parsed.size()];
         String biomeMode=request.has("biomeMode")?request.get("biomeMode").getAsString():"terrain";
         // Pass 1 tests structures with the generation-point check the game uses for /locate,
         // which avoids assembling pieces for seeds that fail another feature anyway.
-        for(var feature:parsed) {
+        for(int i=0;i<parsed.size();i++) {
+            var asked=parsed.get(i);
             // Conditions measured from another condition's matches are checked together with it.
-            if(feature.near!=null){groups.add(List.of());continue;}
-            if(job!=null && !job.running.get())return null;
-            var matches=new ArrayList<Map<String,Object>>();int taken=0;
-            if(feature.kind.equals("structure"))taken=findStructures(feature,seed,state,structState,x,z,job,matches,feature.count,false,companions(feature,parsed,seed,state,structState,job,biomeMode));
-            else {var b=findBiome(feature,seed,state,x,z,job,biomeMode);if(b!=null){matches.add(b);taken=1;}}
-            if(feature.exclude?taken>0:taken<feature.count)return null;
-            // An excluded feature has nothing to report.
-            groups.add(feature.exclude?List.of():matches);
+            if(asked.near!=null){groups.add(List.of());continue;}
+            // The condition itself first, then its alternatives in the order given; the first one that holds is reported.
+            var options=new ArrayList<Feature>();options.add(asked);options.addAll(asked.or);
+            List<Map<String,Object>> kept=null;
+            for(var feature:options) {
+                if(job!=null && !job.running.get())return null;
+                var matches=new ArrayList<Map<String,Object>>();int taken=0;
+                if(feature.kind.equals("structure"))taken=findStructures(feature,seed,state,structState,x,z,job,matches,feature.count,false,companions(feature,parsed,seed,state,structState,job,biomeMode));
+                else {var b=findBiome(feature,seed,state,x,z,job,biomeMode);if(b!=null){matches.add(b);taken=1;}}
+                if(feature.exclude?taken>0:taken<feature.count)continue;
+                // An excluded feature has nothing to report.
+                kept=feature.exclude?List.of():matches;chosen[i]=feature;break;
+            }
+            if(kept==null)return null;
+            groups.add(kept);
         }
         // Pass 2 builds the structure starts, so every reported structure is still a confirmed start.
         for(int i=0;i<parsed.size();i++) {
-            var feature=parsed.get(i);
-            if(!feature.kind.equals("structure")||feature.exclude||feature.near!=null)continue;
+            var feature=chosen[i]!=null?chosen[i]:parsed.get(i);
+            if(!feature.kind.equals("structure")||feature.exclude||parsed.get(i).near!=null)continue;
             if(job!=null && !job.running.get())return null;
             var matches=new ArrayList<Map<String,Object>>();
             if(findStructures(feature,seed,state,structState,x,z,job,matches,feature.count,true,companions(feature,parsed,seed,state,structState,job,biomeMode))<feature.count)return null;
@@ -381,12 +420,14 @@ public final class SeedEngine {
         var result=new LinkedHashMap<String,Object>();result.put("seed",Long.toString(seed));result.put("spawnX",origin.getMiddleBlockX());result.put("spawnZ",origin.getMiddleBlockZ());
         result.put("anchorX",x);result.put("anchorZ",z);result.put("features",found);result.put("version",SharedConstants.getCurrentVersion().id());
         result.put("spawnAccuracy","Snapshot spawn-region estimate; final player spawn may shift.");
+        result.put("spawnBiome",spawnBiome!=null?spawnBiome:surfaceBiome(seed,state,origin.getMiddleBlockX(),origin.getMiddleBlockZ()));
+        if(slime>=0)result.put("slimeChunks",slime);
         return result;
     }
     // Gate on one necessary positive root condition. Never prune on exclusions,
     // dependent conditions, biome samples, or unsupported placement types.
     static Feature spawnGate(List<Feature> features) {
-        return features.stream().filter(f->f.kind.equals("structure") && !f.exclude && f.near==null && f.radius<=256)
+        return features.stream().filter(f->f.kind.equals("structure") && !f.exclude && f.near==null && f.or.isEmpty() && f.radius<=256)
             .filter(f->set(f.key).placement() instanceof RandomSpreadStructurePlacement p && p.spacing()>=32)
             .min(Comparator.comparingDouble(f->(double)f.radius/((RandomSpreadStructurePlacement)set(f.key).placement()).spacing())).orElse(null);
     }

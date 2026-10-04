@@ -68,6 +68,21 @@ jobs:
       - name: Build the installer
         run: npx electron-builder --win --publish never
 
+      # A build that cannot start is not published. The runner has no Minecraft, so this checks what can be
+      # checked without it: the app starts, the bundled Python runs the backend, the bundled Java is found,
+      # and the app explains in plain words that Minecraft is missing.
+      - name: Smoke-test the packaged app
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'smoke'
+          $app = Start-Process 'dist\win-unpacked\Seed Scout.exe' -ArgumentList '--selftest=smoke', '--disable-gpu', "--user-data-dir=$data" -PassThru
+          if (-not $app.WaitForExit(240000)) { $app.Kill(); throw 'The packaged app did not finish its smoke test.' }
+          if (Test-Path "$data\selftest.json") { Get-Content "$data\selftest.json" }
+          if (Test-Path "$data\desktop.log") { Get-Content "$data\desktop.log" -Tail 20 }
+          if ($app.ExitCode -ne 0) { throw "The smoke test failed (exit code $($app.ExitCode))." }
+          & 'dist\win-unpacked\resources\jdk\bin\java.exe' -version
+          if ($LASTEXITCODE) { throw 'The bundled Java does not run.' }
+
       # The release holds only the installer, so there is one obvious file to download.
       - name: Publish the release
         shell: bash

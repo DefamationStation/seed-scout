@@ -10,7 +10,8 @@
     "start": "electron .",
     "vendor": "powershell -NoProfile -ExecutionPolicy Bypass -File vendor.ps1",
     "pack": "electron-builder --win --dir",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "selftest": "electron . --selftest=full"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
@@ -27,6 +28,7 @@
     },
     "files": [
       "main.js",
+      "selftest.js",
       "loading.html"
     ],
     "extraResources": [

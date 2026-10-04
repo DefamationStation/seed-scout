@@ -18,7 +18,9 @@ def conditions(request):
     """The part of a search request that decides which seeds match, in a canonical order."""
     keep={k:request[k] for k in ('anchor','biomeMode','cluster')}
     if request['anchor']=='custom': keep.update(x=request['x'],z=request['z'])
-    keep['features']=sorted(({k:f[k] for k in ('kind','key','radius','mode','minRadius','count','id','near','variants','placements','templates') if k in f} for f in request['features']),key=lambda f:json.dumps(f,sort_keys=True))
+    keep['features']=sorted(({k:f[k] for k in ('kind','key','radius','mode','minRadius','count','id','near','variants','placements','templates','or') if k in f} for f in request['features']),key=lambda f:json.dumps(f,sort_keys=True))
+    # Spawn conditions only appear when set, so searches without them keep the signature they always had.
+    keep.update({k:request[k] for k in ('spawnBiomes','spawnBiomeMode','slime') if k in request})
     return keep
 def closeness(result): return sum(f['distance'] for f in result['features'])
 
@@ -255,7 +257,8 @@ class Engine:
     def validate(self,request):
         if self.catalog is None: raise ValueError('Snapshot engine is still starting.')
         features=request.get('features',[])
-        if not 1<=len(features)<=12: raise ValueError('Select 1–12 features.')
+        if len(features)>12: raise ValueError('Select up to 12 features.')
+        if not features and not request.get('spawnBiomes') and not (isinstance(request.get('slime'),dict) and int(request['slime'].get('count') or 0)>0): raise ValueError('Select 1–12 features, or a spawn condition.')
         for f in features:
             if f.get('kind') not in ('structure','biome'): raise ValueError('Invalid feature type.')
             choices=self.catalog['sets' if f['kind']=='structure' else 'biomes']
@@ -279,6 +282,32 @@ class Engine:
             parent=ids.get(f['near'])
             if parent is None or parent is f or parent['kind']!='structure' or parent['mode']!='within' or parent.get('near'):
                 raise ValueError('A condition can only be measured from a structure you want nearby that is itself measured from the search origin.')
+        # "or": other structures or biomes that satisfy the same condition at the same distances.
+        parents={f['near'] for f in features if f.get('near')}
+        for f in features:
+            alternatives=f.get('or')
+            if not alternatives: f.pop('or',None); continue
+            if f['mode']!='within' or f.get('near') or f.get('id') in parents: raise ValueError('Alternatives are only for a condition you want nearby that is measured from the search origin and that nothing else is measured from.')
+            if not isinstance(alternatives,list) or len(alternatives)>4: raise ValueError('A condition can have up to four alternatives.')
+            cleaned=[]
+            for a in alternatives:
+                if not isinstance(a,dict) or a.get('kind') not in ('structure','biome') or a.get('key') not in self.catalog['sets' if a.get('kind')=='structure' else 'biomes']: raise ValueError('An alternative is not in this snapshot.')
+                item={'kind':a['kind'],'key':a['key']}
+                if item!={'kind':f['kind'],'key':f['key']} and item not in cleaned: cleaned.append(item)
+            if cleaned: f['or']=cleaned
+            else: f.pop('or',None)
+        biomes=request.get('spawnBiomes')
+        if biomes:
+            if not isinstance(biomes,list) or len(biomes)>30 or any(b not in self.catalog['biomes'] for b in biomes): raise ValueError('Invalid spawn biomes.')
+            request['spawnBiomes']=sorted(set(biomes));request['spawnBiomeMode']='not' if request.get('spawnBiomeMode')=='not' else 'in'
+        else: request.pop('spawnBiomes',None);request.pop('spawnBiomeMode',None)
+        slime=request.get('slime')
+        if isinstance(slime,dict) and int(slime.get('count') or 0)>0:
+            radius,count=int(slime.get('radius',5)),int(slime['count'])
+            if not 1<=radius<=8: raise ValueError('Slime chunks are counted within 1–8 chunks.')
+            if count>(2*radius+1)**2: raise ValueError(f'There are only {(2*radius+1)**2} chunks within {radius} chunks.')
+            request['slime']={'count':count,'radius':radius}
+        else: request.pop('slime',None)
         request['biomeMode']=request.get('biomeMode','terrain')
         if request['biomeMode'] not in ('terrain','fast','exhaustive'): raise ValueError('Invalid biome search mode')
         request['anchor']=request.get('anchor','spawn')

@@ -9,6 +9,10 @@ const SUPPORTED_VERSION = '26.4-snapshot-2';
 const UPDATE_INTERVAL = 4 * 60 * 60 * 1000;
 const REPOSITORY = 'DefamationStation/seed-scout';
 
+// --selftest=<scenario> runs the app against a script instead of a person; see selftest.js.
+const selfTestMode = (process.argv.find(a => a.startsWith('--selftest=')) || '').slice('--selftest='.length);
+let selfTest = null;
+
 let window = null, backend = null, backendUrl = '', quitting = false, logStream = null, updateReady = false, updateAvailable = '';
 
 // Installed, everything the backend needs sits beside the app. From a checkout it uses the repository and this machine's tools.
@@ -81,7 +85,7 @@ function startBackend(minecraft) {
     });
     if (choice === 0) return changeMinecraft().then(() => { if (!backend) app.quit(); });
     if (choice === 1) shell.openPath(path.join(app.getPath('userData'), 'desktop.log'));
-    app.quit();
+    if (!selfTest) app.quit();
   });
 }
 
@@ -195,11 +199,30 @@ function setupUpdates() {
     if (response === 0) installUpdate();
   });
   const check = byUser => { asked = byUser; autoUpdater.checkForUpdates().catch(() => { }); };
-  check(false); setInterval(() => check(false), UPDATE_INTERVAL);
-  return { check: () => check(true), install: () => autoUpdater.quitAndInstall() };
+  if (!selfTestMode) { check(false); setInterval(() => check(false), UPDATE_INTERVAL); }
+  return {
+    check: () => check(true), install: () => autoUpdater.quitAndInstall(),
+    // For the self-test: the updater's events without a real release, and a download that fetches nothing.
+    simulate: (event, info, byUser = false) => { asked = byUser; autoUpdater.emit(event, info); },
+    stubDownload: replacement => { autoUpdater.downloadUpdate = replacement; },
+  };
 }
 let updates = null;
 function installUpdate() { quitting = true; stopBackend(); setTimeout(() => updates.install(), 1800); }
+
+// The Settings pane asks the shell for things only it can do through seedscout:// links; web links open in the
+// browser. Returns true for a handled action, 'external' for a web link, false for anything else.
+function shellAction(url, dryRun = false) {
+  const action = /^seedscout:\/\/([a-z-]+)/.exec(url)?.[1];
+  if (action === 'minecraft-folder') changeMinecraft();
+  else if (action === 'import') importData();
+  else if (action === 'data-folder') shell.openPath(dataDir());
+  else if (action === 'about') showAbout();
+  else if (action === 'check-updates') { if (updates) updates.check(); else dialog.showMessageBox(window, { message: 'Updates are checked in the installed app', detail: 'This copy was started from a checkout.' }); }
+  else if (/^https?:/.test(url)) { if (!dryRun) shell.openExternal(url); return 'external'; }
+  else return false;
+  return true;
+}
 
 function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -230,27 +253,22 @@ else {
     window = new BrowserWindow({ width: 1440, height: 900, minWidth: 900, minHeight: 600, backgroundColor: '#0b1012', autoHideMenuBar: true, title: 'Seed Scout', webPreferences: { contextIsolation: true, sandbox: true } });
     window.on('closed', () => { window = null; });
     // Only the local app is shown in the window; any other link opens in the user's browser.
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      // The Settings pane asks the shell for things only it can do through seedscout:// links.
-      const action = /^seedscout:\/\/([a-z-]+)/.exec(url)?.[1];
-      if (action === 'minecraft-folder') changeMinecraft();
-      else if (action === 'import') importData();
-      else if (action === 'data-folder') shell.openPath(dataDir());
-      else if (action === 'about') showAbout();
-      else if (action === 'check-updates') { if (updates) updates.check(); else dialog.showMessageBox(window, { message: 'Updates are checked in the installed app', detail: 'This copy was started from a checkout.' }); }
-      else if (/^https?:/.test(url)) shell.openExternal(url);
-      return { action: 'deny' };
-    });
+    window.webContents.setWindowOpenHandler(({ url }) => { shellAction(url); return { action: 'deny' }; });
     window.webContents.on('will-navigate', (event, url) => { if (backendUrl && !url.startsWith(backendUrl)) { event.preventDefault(); if (/^https?:/.test(url)) shell.openExternal(url); } });
     buildMenu();
     await window.loadFile(path.join(__dirname, 'loading.html'));
+    if (selfTestMode) selfTest = require('./selftest').install(selfTestMode, {
+      app, dialog, Menu, log, settings, saveSettings, showAbout, showReleaseNotes, importData, shellAction,
+      backendUrl: () => backendUrl, updates: () => updates, quit: code => { quitting = true; stopBackend(); setTimeout(() => app.exit(code), 2500); },
+    });
     const folder = await minecraftFolder();
-    if (!folder) return app.quit();
+    if (!folder) return selfTest ? selfTest.noFolder() : app.quit();
     startBackend(folder);
     updates = setupUpdates(); buildMenu();
+    selfTest?.started();
     // The first start of a new version says what changed.
     const previous = settings().version;
-    if (previous !== app.getVersion()) { saveSettings({ version: app.getVersion() }); if (previous && packaged) showReleaseNotes(); }
+    if (previous !== app.getVersion()) { saveSettings({ version: app.getVersion() }); if (previous && packaged && !selfTest) showReleaseNotes(); }
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => { quitting = true; stopBackend(); });

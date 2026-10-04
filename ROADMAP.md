@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Seed Scout stands after 0.1.13 and what comes next. The plan is short on purpose: a few target wins, in
+Where Seed Scout stands after 0.1.14 and what comes next. The plan is short on purpose: a few target wins, in
 order, each with what "done" looks like.
 
 ## Shipped so far
@@ -18,88 +18,41 @@ order, each with what "done" looks like.
 | 0.1.11 | Tags, filter and a copyable text card for saved seeds |
 | 0.1.12 | Marker clusters, Settings panel, fast terrain detail, surface teleport for buried structures |
 | 0.1.13 | Predicted water placement for shipwrecks (floating, shallow, deck underwater, beached), checked against the game's own placement routine |
+| 0.1.14 | Conditions on the spawn itself (spawn biome, either/or alternatives, slime chunks near the origin); a self-test that drives every desktop dialog, run as a smoke test before each release |
 
 Before that: the seed search itself, the terrain map with relief and contours, structure layers, saved seeds
 and the rare-find catalogue.
 
 ## Now
 
-### 1. Shake-down of the installed app
+### 1. Whole-seed search
 
-Several desktop-only pieces were built without ever being run in an installed copy: the update prompt (Yes / No
-and the remembered No), About and What's new, the import menu, the Settings panel's desktop buttons, and the
-start-up error dialog with "Choose Minecraft folder".
+Every condition today is measured from one origin: the spawn or a chosen coordinate. The next focus is a search
+that looks across the whole seed, so a seed matches when the conditions hold *somewhere* in it.
 
-- Walk through each once in the installed app and fix what misbehaves.
-- Add a smoke test to the release workflow: start the packaged app, wait for the engine to be ready, fetch one
-  tile, quit. A release that cannot start should fail the workflow instead of reaching users.
+- **Anywhere within a range:** "a mushroom island anywhere within 5,000 blocks", with the place it was found
+  reported as the result's origin instead of the spawn.
+- **Groups that travel together:** "a village, a trial chamber and a cherry grove within 300 blocks of each
+  other, anywhere in the seed". The group's centre becomes the place to go, with its distance from spawn shown.
+- **Counts over an area:** "at least three ancient cities within 3,000 blocks of spawn".
+- **Speed:** structure positions come from the placement grid, so a whole region can be listed without building
+  anything; only the candidates that satisfy the distances are confirmed. Biome conditions are the expensive
+  part and need a coarse pass first.
 
-*Done when:* every item above has been seen working, and the workflow refuses to publish a build that does not
-start.
+*Done when:* a search can ask for a group of features near each other anywhere within a chosen range of spawn,
+and the result opens the map on that group.
 
-### 2. Real heights for surface structures
-
-0.1.13 predicts where a shipwreck ends up by running the game's own placement step on base terrain. The same
-approach fits the other structures that are built at a placeholder height and moved onto the terrain later:
-igloos, swamp huts, jungle temples, desert pyramids, ocean ruins and buried treasure. Today their card shows a
-ground height and the teleport lands beside them on a guess.
-
-- Compute the placed height and box for those types with the game's routine.
-- Use it for the card, the map footprint and the teleport, so "beside it" is beside the real walls and buried
-  treasure gives the chest's Y.
-
-*Done when:* the card shows the placed Y for each of those types and a test compares it with the game's
-routine, as the shipwreck one does.
-
-### 3. Waypoint export
-
-The card copies coordinates one at a time. Anyone who plays with a minimap wants the whole set in the game.
-
-- Export a seed's matches and pins as a waypoint file for Xaero's Minimap and for JourneyMap, with names,
-  colours taken from the marker colours, and the standing spot as the position.
-- One button on the saved seed and one in the Layers panel ("Export what is on the map").
-
-*Done when:* a file exported from Seed Scout loads in Xaero's Minimap and the waypoints sit on the structures.
-
-## Next
-
-### 4. Conditions on the spawn itself
-
-Every condition today is a distance from an origin. Common wishes that cannot be expressed:
-
-- **Spawn biome:** "spawn in a cherry grove", or "not in an ocean".
-- **Either / or:** "a village or a pillager outpost within 300 blocks" as one condition.
-- **Slime chunks:** "at least N slime chunks within 5 chunks of spawn", using the formula the map already has.
-
-*Done when:* each of the three can be added in Find, searched, and shown on the result.
-
-### 5. Search queue
-
-A search holds the app until it finishes, and only one set of conditions runs at a time.
-
-- Queue several condition sets (from saved presets) and run them one after another, each with its own budget.
-- Survive a restart: a queue in progress resumes where it stopped.
-- One notification when the whole queue is done, with matches per entry.
-
-*Done when:* three presets can be queued, the app closed and reopened halfway, and all three finish.
-
-### 6. Nether
-
-The card already shows Nether coordinates, but the Nether itself is invisible.
-
-- Nether structure layers (fortresses, bastions) drawn at their overworld-equivalent position, with the Nether
-  coordinates on the card.
-- Search conditions for them: "fortress within 300 Nether blocks of the spawn portal position".
-- A Nether biome map can follow; structures first, since they decide whether a seed is worth playing.
-
-*Done when:* a fortress and a bastion can be required in a search and are shown on the map.
+*Open questions:* how far "the entire seed" should reach by default (a few thousand blocks, or much more), and
+whether the result should rank by distance from spawn or by how tight the group is.
 
 ## Later
 
+- **Nether:** fortresses and bastions as map layers at their overworld-equivalent position and as search
+  conditions; a Nether biome map after that.
 - **Legend that points:** click a biome in the legend to highlight it on the map and jump to its nearest patch.
 - **Height profile:** the measure tool shows the terrain profile along its line.
 - **Map image export:** save the current view as a PNG with the markers and scale bar.
-- **Named pins:** a name, a colour and a note on a pin, carried into the waypoint export.
+- **Named pins:** a name, a colour and a note on a pin.
 - **Shared seed links:** a link or string that opens a seed at a position with its pins, and importing one.
 
 ## Parked
