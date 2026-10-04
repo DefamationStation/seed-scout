@@ -65,7 +65,14 @@
           <button data-preset="starter">Village + cherry grove</button>
           <button data-preset="island">Village + mushroom fields</button>
           <button data-preset="adventure">Village + trial chamber</button>
+          <span id="saved-presets"></span>
+          <button id="condition-preset-save" class="add" title="Keep the current conditions as a preset">+ Save current</button>
         </div>
+        <form class="preset-name" id="condition-preset-form" hidden>
+          <input id="condition-preset-name" type="text" maxlength="40" placeholder="Name these conditions" aria-label="Preset name">
+          <button class="btn small primary" type="submit">Save preset</button>
+          <button class="btn small" type="button" id="condition-preset-cancel">Cancel</button>
+        </form>
         <div class="tabs">
           <button class="active" data-kind="structure">Structures</button>
           <button data-kind="biome">Biomes</button>
@@ -113,6 +120,7 @@
         <button id="stop" class="btn danger" hidden><span data-icon="stop"></span>Stop</button>
         <button id="resume" class="btn" hidden>Resume</button>
       </div>
+      <p id="estimate" class="hint estimate" hidden></p>
       <p id="notice" class="notice" role="status">Loading the installed Minecraft generation code.</p>
     </div>
   </section>
@@ -257,8 +265,13 @@
   <div class="map-empty" id="map-empty">
     <div class="empty-card">
       <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 16l16-6 16 6 16-6v38l-16 6-16-6-16 6z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M24 10v38M40 16v38" stroke="currentColor" stroke-width="2.5"/><circle cx="32" cy="30" r="4" fill="var(--accent)"/></svg>
-      <h3>A good world is out there.</h3>
-      <p>Choose features on the left and start a search,<br>or open any seed from the bar above.</p>
+      <h3 id="empty-title">Starting the engine…</h3>
+      <p id="empty-text">Loading the game's world generation from your Minecraft install. This takes 10 to 15 seconds.</p>
+      <div class="empty-actions" id="empty-actions" hidden>
+        <button class="btn primary" id="empty-search"><span data-icon="search"></span>Find a village near a cherry grove</button>
+        <button class="btn" id="empty-random"><span data-icon="map"></span>Open a random seed</button>
+      </div>
+      <p class="hint" id="empty-hint"></p>
     </div>
   </div>
 

@@ -50,6 +50,12 @@ class Catalogue:
                 if old is None or old['tested']<int(run['tested']): db.execute('INSERT OR REPLACE INTO runs VALUES(?,?,?,?,?)',(find,str(run['start']),int(run['tested']),int(run['matches']),float(run.get('seconds',0))))
             db.executemany('INSERT OR REPLACE INTO seeds VALUES(?,?,?)',[(find,r['seed'],json.dumps(r)) for r in results])
             return find
+    def rarity(self,wanted,version):
+        """Seeds checked, matches and seconds over every recorded run of exactly these conditions, or None."""
+        signature=json.dumps(wanted,sort_keys=True,separators=(',',':'))
+        with self.db() as db:
+            row=db.execute('SELECT SUM(tested) AS tested,SUM(matches) AS matches,SUM(seconds) AS seconds FROM runs JOIN finds ON finds.id=find_id WHERE signature=? AND version=?',(signature,version)).fetchone()
+        return dict(row) if row and row['tested'] and row['matches'] else None
     def seeds(self,version,limit=20000):
         with self.db() as db: return [r['seed'] for r in db.execute('SELECT DISTINCT seed FROM seeds JOIN finds ON finds.id=find_id WHERE version=? ORDER BY find_id DESC LIMIT ?',(version,limit))]
     def listing(self,export=False):
@@ -128,7 +134,7 @@ class Engine:
                         self.state['matches']=len(self.state['results'])
                         self.save_results()
         with self.lock:
-            self.failure='Snapshot engine stopped. See runtime/engine.log.'
+            self.failure='The generation engine stopped unexpectedly. Restart Seed Scout; the reason is at the end of runtime/engine.log in its data folder.'
             self.state.update(running=False,error=self.failure); self.ready.set()
     def finish(self):
         """A search has ended: keep it in the catalogue if it turned out to be rare, then persist the results."""
@@ -340,6 +346,21 @@ class Engine:
         if not 1<=len(places)<=16 or any(len(place)!=2 for place in places): raise ValueError('Ask for 1–16 tiles at a time')
         return places
     def settings(self): return read_settings()
+    def estimate(self,request):
+        """How rare these conditions were the last time they were searched: from the last search if it used them,
+        else from the rare-find catalogue. Nothing is computed; an unseen combination has no estimate."""
+        wanted=conditions(self.validate(copy.deepcopy(request)))
+        with self.lock: last=copy.deepcopy(self.state)
+        found=None
+        if last.get('request') and last.get('tested') and conditions(last['request'])==wanted:
+            fresh=sum(1 for r in last['results'] if not r.get('fromCatalogue'))
+            if fresh: found={'tested':last['tested'],'matches':fresh,'seconds':last.get('seconds',0),'source':'last search'}
+        if found is None:
+            found=self.catalogue.rarity(wanted,self.catalog['version'])
+            if found: found['source']='catalogue'
+        if found is None: return {'known':False}
+        return {'known':True,'source':found['source'],'matches':found['matches'],'seedsPerMatch':max(1,round(found['tested']/found['matches'])),
+                'rate':round(found['tested']/found['seconds'],1) if found['seconds'] else None}
     def configure(self,request):
         if self.catalog is None: raise ValueError('Snapshot engine is still starting.')
         workers=number(request,'mapWorkers')
@@ -519,6 +540,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/saved': result=self.server.engine.save_seed(request)
             elif self.path=='/api/saved-delete': result=self.server.engine.forget_seed(request)
             elif self.path=='/api/config': result=self.server.engine.configure(request)
+            elif self.path=='/api/estimate': result=self.server.engine.estimate(request)
             elif self.path=='/api/version': result=switch_version(self.server,request)
             elif self.path=='/api/catalogue-delete': self.server.engine.catalogue.delete(int(request['id']));result={'finds':self.server.engine.catalogue.listing()}
             elif self.path=='/api/catalogue-import': result=self.server.engine.catalogue_import(request)
@@ -544,7 +566,12 @@ def main():
             return
     except (OSError,ValueError): pass
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
-    server.engine=Engine(); atexit.register(lambda: server.engine.close())
+    # The desktop shell shows these lines while it waits: the stage being worked on, or why starting failed.
+    print(f'Seed Scout stage: Compiling the engine against Minecraft {chosen_version()}',flush=True)
+    try: server.engine=Engine()
+    except (RuntimeError,OSError) as error:
+        print(f'Seed Scout error: {error}',flush=True);server.server_close();raise SystemExit(2) from None
+    atexit.register(lambda: server.engine.close())
     url=f'http://127.0.0.1:{server.server_port}'
     print('Seed Scout: '+url,flush=True)
     if not args.no_browser: webbrowser.open(url)

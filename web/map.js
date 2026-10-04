@@ -158,7 +158,7 @@ const worldMap = (() => {
       if (best) { i = cell.index; break; }
     }
     if (!best) return null;
-    // Quick tiles only estimate the height, so they report the biome alone.
+    // Quick tiles only estimate the height, which the status bar marks as approximate.
     return { biome: best.palette[best.biomes[i]], y: best.elevation[i], water: best.water[i], exact: best.mode === 'terrain' };
   }
 
@@ -527,7 +527,7 @@ const worldMap = (() => {
   }
   function describe(event) {
     const at = locate(event), info = sample(at.worldX, at.worldZ), marker = drag?.moved ? null : markerAt(at.px, at.py);
-    $('status-cursor').innerHTML = `<b>X</b> ${at.x} <b>Z</b> ${at.z}<span><b>Chunk</b> ${Math.floor(at.x / 16)}, ${Math.floor(at.z / 16)}</span>${info ? `<span><i class="swatch" style="background:${terrain.colour(info.biome)}"></i>${esc(label(info.biome))}</span>${info.exact ? `<span><b>Y</b> ${info.y}${info.water ? ' · water' : ''}</span>` : ''}` : ''}`;
+    $('status-cursor').innerHTML = `<b>X</b> ${at.x} <b>Z</b> ${at.z}<span><b>Chunk</b> ${Math.floor(at.x / 16)}, ${Math.floor(at.z / 16)}</span>${info ? `<span><i class="swatch" style="background:${terrain.colour(info.biome)}"></i>${esc(label(info.biome))}</span><span><b>Y</b> ${info.exact ? '' : '≈ '}${info.y}${info.water ? ' · water' : ''}</span>` : ''}`;
     if (measure) { measure.cursor = at; measureText(); invalidate(); }
     if (marker !== hover) { hover = marker; invalidate(); }
     const tip = $('map-tip');

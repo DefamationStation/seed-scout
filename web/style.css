@@ -156,6 +156,14 @@ select option, select optgroup { background: var(--surface-2); color: var(--text
 .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .presets button { height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--text-2); font-size: 11.5px; }
 .presets button:hover { border-color: var(--accent); color: var(--accent-strong); }
+.presets #saved-presets { display: contents; }
+.presets .saved-preset { display: inline-flex; align-items: center; height: 26px; border: 1px solid var(--line); border-radius: 999px; }
+.presets .saved-preset:hover { border-color: var(--accent); }
+.presets .saved-preset button { height: 24px; border: 0; padding: 0 4px 0 10px; }
+.presets .saved-preset button + button { padding: 0 8px 0 2px; color: var(--muted); }
+.presets button.add { border-style: dashed; color: var(--muted); }
+#condition-preset-form { margin-bottom: 12px; }
+.estimate { margin: 8px 0 0; }
 .tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); }
 .tabs button { padding: 7px 0; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font-size: 13px; font-weight: 550; }
 .tabs button:hover { color: var(--text); }
@@ -326,8 +334,10 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .map-host canvas.measuring { cursor: crosshair; }
 .map-host canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 .map-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; background-color: #0d1315; background-image: linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .028) 1px, transparent 1px); background-size: 32px 32px; }
-.empty-card { max-width: 380px; text-align: center; color: var(--muted); }
-.empty-card svg { width: 62px; height: 62px; color: var(--line-strong); }
+.empty-card { max-width: 400px; text-align: center; color: var(--muted); }
+.empty-actions { display: flex; flex-direction: column; gap: 8px; margin: 18px auto 0; max-width: 300px; }
+.empty-card .hint { margin-top: 14px; }
+.empty-card > svg { width: 62px; height: 62px; color: var(--line-strong); }
 .empty-card h3 { margin: 16px 0 6px; font-size: 20px; font-weight: 650; letter-spacing: -.4px; color: var(--text); }
 .float, .seed-chip, .measure-bar, .inspector, .tool-group, .scale, .map-tip { background: var(--glass); border: 1px solid var(--line-strong); box-shadow: var(--shadow); backdrop-filter: blur(10px); }
 .seed-chip { position: absolute; top: 12px; left: 12px; display: flex; align-items: center; gap: 9px; height: 38px; max-width: calc(100% - 24px); padding: 0 4px 0 12px; border-radius: 10px; }

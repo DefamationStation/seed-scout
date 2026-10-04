@@ -40,7 +40,8 @@ def chosen_version():
 def prepare(version=None):
     version = version or chosen_version()
     version_dir = GAME_HOME / 'versions' / version
-    if not (version_dir / f'{version}.json').exists(): raise RuntimeError(f'Minecraft {version} is not installed in {GAME_HOME}')
+    if not (JDK / 'bin/javac.exe').exists(): raise RuntimeError(f'Java was not found in {JDK}. Reinstall Seed Scout, or set SEED_SCOUT_JDK to a JDK 25 folder.')
+    if not (version_dir / f'{version}.json').exists(): raise RuntimeError(f'Minecraft {version} is not installed in {GAME_HOME}. Install it in the Minecraft Launcher and start it once, or choose another Minecraft folder.')
     metadata = json.loads((version_dir / f'{version}.json').read_text(encoding='utf-8'))
     game = version_dir / f'{version}.jar'
     def allowed(lib):
@@ -54,7 +55,7 @@ def prepare(version=None):
     libraries = [GAME_HOME / 'libraries' / lib['downloads']['artifact']['path']
                  for lib in metadata['libraries'] if allowed(lib) and 'artifact' in lib.get('downloads', {})]
     missing = [str(p) for p in [game, *libraries] if not p.exists()]
-    if missing: raise RuntimeError('Missing installed Minecraft libraries: ' + ', '.join(missing[:3]))
+    if missing: raise RuntimeError(f'Minecraft {version} is only partly downloaded: {len(missing)} of its files are missing (the first: {pathlib.Path(missing[0]).name}). Start that version once in the Minecraft Launcher so it finishes downloading, then open Seed Scout again.')
     output = DATA / 'runtime/classes'; output.mkdir(parents=True, exist_ok=True)
     cp = os.pathsep.join(map(str, [output, game, *libraries]))
     args = ['-encoding', 'UTF-8', '-cp', cp, '-d', str(output), *map(str, (ROOT/'src').glob('*.java'))]
@@ -65,7 +66,7 @@ def prepare(version=None):
     if result.returncode:
         errors = [line for line in (result.stderr + result.stdout).splitlines() if ' error: ' in line]
         first = errors[0].split(' error: ', 1)[1] if errors else (result.stderr.strip().splitlines() or ['javac failed'])[-1]
-        raise RuntimeError(f'Seed Scout does not support Minecraft {version} yet: its world generation code differs from {DEFAULT_VERSION} ({len(errors)} compile errors, the first: {first}).')
+        raise RuntimeError(f'Seed Scout does not support Minecraft {version} yet: its world generation code differs from {DEFAULT_VERSION}. Use {DEFAULT_VERSION}, or another version listed at the top of the app. (Technical detail: {len(errors)} compile errors, the first: {first})')
     os.replace(attempt, DATA / 'runtime/compile.args')
     runargs = DATA / 'runtime/engine.args'
     runargs.write_text('\n'.join('"'+s.replace('\\','/')+'"' for s in [f'-Xmx{engine_memory()}g','-cp',cp,'SeedEngine']), encoding='utf-8')

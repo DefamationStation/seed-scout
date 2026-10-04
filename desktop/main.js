@@ -57,9 +57,13 @@ function startBackend(minecraft) {
   if (jdk) env.SEED_SCOUT_JDK = jdk;
   // Port 0 lets the system pick a free port; the backend prints the address it ended up on.
   const child = backend = spawn(python, [path.join(appRoot, 'app.py'), '--port', '0', '--no-browser'], { cwd: dataDir(), env, windowsHide: true });
-  let tail = '';
+  let tail = '', failure = '';
   const read = chunk => {
     const text = chunk.toString(); log(text); tail = (tail + text).slice(-4000);
+    // The backend says what it is doing, and in plain words why it could not start.
+    const stage = /Seed Scout stage: (.+)/.exec(text), error = /Seed Scout error: (.+)/.exec(text);
+    if (stage && !backendUrl) window?.webContents.executeJavaScript(`document.getElementById('stage') && (document.getElementById('stage').textContent = ${JSON.stringify(stage[1] + '…')})`).catch(() => { });
+    if (error) failure = error[1].trim();
     const found = !backendUrl && /Seed Scout: (http:\/\/127\.0\.0\.1:\d+)/.exec(tail);
     if (found) { backendUrl = found[1]; window?.loadURL(backendUrl); }
   };
@@ -71,7 +75,12 @@ function startBackend(minecraft) {
     if (quitting) return;
     // The page's own power button stops the backend; that closes the app. Anything else is a failure worth showing.
     if (backendUrl && code === 0) return app.quit();
-    dialog.showMessageBoxSync(window, { type: 'error', message: 'Seed Scout could not start its engine', detail: tail.trim().split('\n').slice(-12).join('\n') || `The backend stopped (code ${code}).`, buttons: ['Quit'] });
+    const choice = dialog.showMessageBoxSync(window, {
+      type: 'error', message: 'Seed Scout could not start', buttons: ['Choose Minecraft folder…', 'Open log', 'Quit'], defaultId: 0, cancelId: 2,
+      detail: failure || `The engine stopped while starting (code ${code}). The last lines of its output:\n\n${tail.trim().split('\n').slice(-8).join('\n')}`,
+    });
+    if (choice === 0) return changeMinecraft().then(() => { if (!backend) app.quit(); });
+    if (choice === 1) shell.openPath(path.join(app.getPath('userData'), 'desktop.log'));
     app.quit();
   });
 }

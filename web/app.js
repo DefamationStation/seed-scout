@@ -166,6 +166,76 @@ $('version').onchange = async () => {
   try { await api('/api/version', { version: wanted }); location.reload(); }
   catch (e) { select.value = select.dataset.current; select.disabled = false; toast(e.message, true); }
 };
+// ---- First run and returning --------------------------------------------
+$('empty-search').onclick = () => { document.querySelector('[data-preset="starter"]').click(); startSearch(); };
+$('empty-random').onclick = () => openSeed(String(BigInt.asIntN(64, crypto.getRandomValues(new BigUint64Array(1))[0])));
+// The seed and view that were on screen last time come back when the app opens.
+let lastViewTimer = 0;
+worldMap.on('view', view => {
+  clearTimeout(lastViewTimer);
+  lastViewTimer = setTimeout(() => { try { if (worldMap.seed()) localStorage.setItem('seed-scout-last-view', JSON.stringify({ seed: worldMap.seed(), x: Math.round(view.x), z: Math.round(view.z), bpp: view.bpp })); } catch { } }, 600);
+});
+worldMap.on('close', () => { try { localStorage.removeItem('seed-scout-last-view'); } catch { } });
+async function restoreLastView() {
+  let last = null;
+  try { last = JSON.parse(localStorage.getItem('seed-scout-last-view')); } catch { }
+  if (!last || !/^-?\d+$/.test(last.seed || '')) return;
+  try {
+    const result = allResults().find(r => r.seed === last.seed) || await api('/api/open', { seed: last.seed, x: 0, z: 0 });
+    if (!allResults().some(r => r.seed === result.seed)) manualResults.unshift(result);
+    selectSeed(result); worldMap.jump(last.x, last.z, last.bpp);
+  } catch { }
+}
+// ---- Saved condition presets ---------------------------------------------
+// Beside the three built-in ones: the chosen features with their distances, and the search origin settings.
+const PRESET_FIELDS = ['anchor', 'radius', 'x', 'z', 'cluster', 'biomeMode'];
+function conditionPresets() { try { return JSON.parse(localStorage.getItem('seed-scout-condition-presets')) || []; } catch { return []; } }
+function renderConditionPresets() {
+  $('saved-presets').innerHTML = conditionPresets().map((p, i) => `<span class="saved-preset"><button data-saved-preset="${i}" title="Use these conditions">${esc(p.name)}</button><button data-delete-preset="${i}" title="Delete this preset" aria-label="Delete preset ${esc(p.name)}">×</button></span>`).join('');
+}
+$('saved-presets').onclick = e => {
+  const use = e.target.closest('[data-saved-preset]'), remove = e.target.closest('[data-delete-preset]'), all = conditionPresets();
+  if (remove) { all.splice(Number(remove.dataset.deletePreset), 1); localStorage.setItem('seed-scout-condition-presets', JSON.stringify(all)); return renderConditionPresets(); }
+  if (!use || !catalog) return;
+  const preset = all[Number(use.dataset.savedPreset)];
+  chosen.clear();
+  for (const f of preset.chosen) if ((f.kind === 'structure' ? catalog.sets : catalog.biomes).includes(f.key)) chosen.set(`${f.kind}:${f.key}`, condition(f.kind, f.key, f));
+  for (const [k, v] of Object.entries(preset.fields || {})) if (PRESET_FIELDS.includes(k) && $(k)) $(k).value = v;
+  syncAnchor(); renderFeatures(); renderChosen(); save();
+};
+$('condition-preset-save').onclick = () => { commitConditionFields(); $('condition-preset-form').hidden = false; $('condition-preset-name').value = ''; $('condition-preset-name').focus(); };
+$('condition-preset-cancel').onclick = () => { $('condition-preset-form').hidden = true; };
+$('condition-preset-form').onsubmit = e => {
+  e.preventDefault();
+  const name = $('condition-preset-name').value.trim();
+  if (!name) return;
+  if (!chosen.size) return toast('Choose at least one feature first.', true);
+  const all = conditionPresets().filter(p => p.name !== name);
+  if (all.length >= 20) return toast('You can keep up to 20 presets. Delete one first.', true);
+  all.push({ name, chosen: [...chosen.values()], fields: Object.fromEntries(PRESET_FIELDS.map(k => [k, $(k).value])) });
+  localStorage.setItem('seed-scout-condition-presets', JSON.stringify(all));
+  $('condition-preset-form').hidden = true; renderConditionPresets(); toast(`Preset "${name}" saved`);
+};
+
+// ---- Odds and time before starting ---------------------------------------
+// Shown when exactly these conditions were searched before (the last search, or a rare find in the catalogue).
+let estimateTimer = 0, estimateToken = 0;
+const duration = seconds => seconds < 1.5 ? 'a second' : seconds < 90 ? `${Math.round(seconds)} seconds` : seconds < 5400 ? `${Math.round(seconds / 60)} minutes` : `${(seconds / 3600).toFixed(1)} hours`;
+function queueEstimate() {
+  clearTimeout(estimateTimer);
+  estimateTimer = setTimeout(async () => {
+    const token = ++estimateToken, line = $('estimate');
+    let found = null;
+    try { if (catalog && chosen.size) found = await api('/api/estimate', request()); } catch { }
+    if (token !== estimateToken) return;
+    line.hidden = !found?.known;
+    if (!found?.known) return;
+    const wanted = Number($('maxMatches').value) || 10, budget = Number($('limit').value) || 0, needed = found.seedsPerMatch * wanted;
+    line.textContent = `About 1 in ${fmt(found.seedsPerMatch)} seeds matched ${found.source === 'catalogue' ? 'in your catalogue' : 'in the last search'}${found.matches < 5 ? ' (a rough figure)' : ''}`
+      + (found.rate ? ` · roughly ${duration(needed / found.rate)} for ${fmt(wanted)} result${wanted === 1 ? '' : 's'} at ${fmt(Math.round(found.rate))} seeds a second` : '')
+      + (budget && needed > budget ? ` · the ${fmt(budget)}-seed budget would find about ${fmt(Math.floor(budget / found.seedsPerMatch))}` : '') + '.';
+  }, 500);
+}
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 function toast(message, error = false) {
   const el = $('toast'); el.textContent = message; el.classList.toggle('error', error); el.hidden = false;
@@ -223,7 +293,7 @@ function familyFilterDescription(f) {
 }
 const conditionName = f => `${label(f.key)}${familyFilterDescription(f) ? ` (${familyFilterDescription(f)})` : ''}`;
 // The starting seed is deliberately not remembered: left blank, every search starts from a new random seed.
-function save() { localStorage.setItem('seed-scout-settings', JSON.stringify({ defaults: 2, fields: Object.fromEntries(fields.filter(k => k !== 'seed').map(k => [k, $(k).value])), chosen: [...chosen.values()] })); }
+function save() { queueEstimate(); localStorage.setItem('seed-scout-settings', JSON.stringify({ defaults: 2, fields: Object.fromEntries(fields.filter(k => k !== 'seed').map(k => [k, $(k).value])), chosen: [...chosen.values()] })); }
 try {
   const saved = JSON.parse(localStorage.getItem('seed-scout-settings'));
   // The default seed budget rose from 100,000 to 1,000,000; a saved value that is just the old default follows it.
@@ -417,6 +487,7 @@ async function startSearch(fromSeed) {
   try {
     const payload = request();
     save();
+    if (window.Notification?.permission === 'default') Notification.requestPermission().catch(() => { });
     const response = await api('/api/start', { ...payload, rareThreshold: Number($('rare-threshold').value) || 100000, useCatalogue: $('rare-first').checked, ...(fromSeed ? { seed: fromSeed } : {}) });
     state.running = true; manualResults = []; selectedSeed = null;
     notice(`Searching from seed ${response.seed}${$('seed').value.trim() || fromSeed ? '' : ' (picked at random)'}.`);
@@ -839,8 +910,16 @@ async function poll() {
     worldMap.refresh(); renderLayers();
     renderFeatures(); renderChosen();
     notice('Ready. Choose features, then start searching.');
+    // The empty map doubles as the first-run screen: what was found, and two ways to see something at once.
+    $('empty-title').textContent = 'A good world is out there.';
+    $('empty-text').textContent = 'Choose features on the left and start a search, open any seed from the bar above, or start with one of these.';
+    $('empty-actions').hidden = false;
+    $('empty-hint').textContent = `Using ${versionName(catalog.version)} from your Minecraft install.${navigator.userAgent.includes('Electron') ? ' To bring saved seeds from another copy, use File → Import saved seeds and catalogue.' : ''}`;
+    restoreLastView(); queueEstimate();
   }
   if (state.running && !fresh.running && !fresh.error) {
+    // A search that ran for a while, or finished while the window was out of sight, is announced by the system too.
+    if ((document.hidden || (fresh.seconds || 0) > 30) && window.Notification?.permission === 'granted') new Notification('Seed Scout search finished', { body: `${fmt(fresh.matches || 0)} match${fresh.matches === 1 ? '' : 'es'} from ${fmt(fresh.tested || 0)} checked seeds.` });
     notice(`Search finished: ${fmt(fresh.matches || 0)} matches from ${fmt(fresh.tested || 0)} checked seeds.`);
     toast(fresh.catalogued ? `Search finished · ${fmt(fresh.matches || 0)} matches · rare combination added to your catalogue` : `Search finished · ${fmt(fresh.matches || 0)} matches`);
     loadCatalogue();
@@ -864,5 +943,5 @@ async function poll() {
   if (state.error) notice(state.error, true);
   renderResults();
 }
-syncAnchor(); renderLayers(); renderPresets(); renderChosen(); openPanel('find', true); loadSaved().then(loadCatalogue); poll();
+syncAnchor(); renderLayers(); renderPresets(); renderConditionPresets(); renderChosen(); openPanel('find', true); loadSaved().then(loadCatalogue); poll();
 const timer = setInterval(poll, 1000);
