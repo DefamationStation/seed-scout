@@ -15,8 +15,13 @@ Expand-Archive $zip (Join-Path $vendor 'python'); Remove-Item $zip
 $pth = Get-ChildItem (Join-Path $vendor 'python') -Filter 'python*._pth' | Select-Object -First 1
 Add-Content $pth.FullName '..\app'
 
-# java.se covers what the game's world generation uses; the rest: the compiler, sun.misc.Unsafe, and reading jars as file systems.
-& (Join-Path $Jdk 'bin\jlink.exe') --add-modules java.se,jdk.compiler,jdk.unsupported,jdk.zipfs,jdk.management `
-  --strip-debug --no-header-files --no-man-pages --compress zip-6 --output (Join-Path $vendor 'jdk')
+# The backend never opens an encrypted connection, so OpenSSL (a third of the embeddable build) is left out.
+foreach ($name in 'libcrypto-3.dll', 'libssl-3.dll', '_ssl.pyd', '_hashlib.pyd') { Remove-Item (Join-Path $vendor "python\$name") -ErrorAction SilentlyContinue }
+
+# Only what the game's world generation loads, plus the compiler: no desktop, SQL or scripting modules.
+# jdk.unsupported is sun.misc.Unsafe, jdk.zipfs reads the game jar as a file system, jdk.jfr is touched at start-up.
+# Left uncompressed here because the installer compresses everything together, and does it better.
+& (Join-Path $Jdk 'bin\jlink.exe') --add-modules java.base,java.logging,java.management,java.naming,java.xml,jdk.compiler,jdk.unsupported,jdk.zipfs,jdk.jfr `
+  --strip-debug --no-header-files --no-man-pages --compress zip-0 --output (Join-Path $vendor 'jdk')
 if ($LASTEXITCODE) { throw 'jlink failed' }
 "python: $((Get-ChildItem (Join-Path $vendor 'python') -Recurse | Measure-Object Length -Sum).Sum / 1MB -as [int]) MB, jdk: $((Get-ChildItem (Join-Path $vendor 'jdk') -Recurse | Measure-Object Length -Sum).Sum / 1MB -as [int]) MB"

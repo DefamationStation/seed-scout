@@ -30,6 +30,8 @@ jobs:
         working-directory: desktop
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # the release notes list the commits since the previous version's tag
 
       - uses: actions/setup-node@v5
         with:
@@ -73,7 +75,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "v$VERSION" dist/*.exe --target "$(git rev-parse HEAD)" --title "Seed Scout $VERSION" --generate-notes --latest
+          previous=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          notes=$(git log --no-merges --format='- %s' ${previous:+$previous..}HEAD | grep -v '^- Release v' || true)
+          gh release create "v$VERSION" dist/*.exe --target "$(git rev-parse HEAD)" --title "Seed Scout $VERSION" --notes "${notes:-Maintenance release.}" --latest
 
       # The feed is published after the release, so it never names an installer that is not there yet.
       # It lives on its own branch with the installer's full address in it.

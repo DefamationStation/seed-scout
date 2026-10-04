@@ -7,6 +7,7 @@ const path = require('node:path');
 // The engine is written against this version's world-generation classes.
 const SUPPORTED_VERSION = '26.4-snapshot-2';
 const UPDATE_INTERVAL = 4 * 60 * 60 * 1000;
+const REPOSITORY = 'DefamationStation/seed-scout';
 
 let window = null, backend = null, backendUrl = '', quitting = false, logStream = null, updateReady = false;
 
@@ -112,6 +113,31 @@ async function importData() {
   startBackend(minecraft);
 }
 
+// What changed in a version: the notes the release workflow wrote from the commits that went into it.
+async function showReleaseNotes(version = app.getVersion()) {
+  const page = `https://github.com/${REPOSITORY}/releases/tag/v${version}`;
+  let notes = '';
+  try {
+    const response = await fetch(`https://api.github.com/repos/${REPOSITORY}/releases/tags/v${version}`, { headers: { 'User-Agent': 'seed-scout', Accept: 'application/vnd.github+json' } });
+    if (response.ok) notes = String((await response.json()).body || '').trim();
+  } catch { }
+  const { response } = await dialog.showMessageBox(window, {
+    type: 'info', buttons: ['OK', 'Open on GitHub'], defaultId: 0, cancelId: 0, message: `What's new in Seed Scout ${version}`,
+    detail: notes ? (notes.length > 1500 ? `${notes.slice(0, 1500)}…` : notes) : 'The notes for this version could not be loaded. They are on its GitHub release page.',
+  });
+  if (response === 1) shell.openExternal(page);
+}
+async function showAbout() {
+  const { response } = await dialog.showMessageBox(window, {
+    type: 'info', buttons: ['OK', "What's new", 'GitHub'], defaultId: 0, cancelId: 0, message: `Seed Scout ${app.getVersion()}`,
+    detail: `Finds Minecraft seeds by the structures and biomes near spawn, with a terrain map.\n\n` +
+      `Reads Minecraft ${SUPPORTED_VERSION} from:\n${settings().minecraft || defaultMinecraft()}\n\n` +
+      `Open source under the MIT licence. Not affiliated with Mojang or Microsoft; Minecraft is not included.`,
+  });
+  if (response === 1) showReleaseNotes();
+  if (response === 2) shell.openExternal(`https://github.com/${REPOSITORY}`);
+}
+
 // ---- Updates: the release workflow publishes each version to GitHub Releases, where the updater looks. ----
 function setupUpdates() {
   if (!packaged) return null;
@@ -150,7 +176,9 @@ function buildMenu() {
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { label: 'Help', submenu: [
       updateReady ? { label: 'Restart to update', click: installUpdate } : { label: 'Check for updates…', enabled: !!updates, click: () => updates.check() },
-      { label: `Version ${app.getVersion()}`, enabled: false },
+      { label: "What's new", click: () => showReleaseNotes() },
+      { type: 'separator' },
+      { label: 'About Seed Scout', click: showAbout },
     ] },
   ]));
 }
@@ -173,6 +201,9 @@ else {
     if (!folder) return app.quit();
     startBackend(folder);
     updates = setupUpdates(); buildMenu();
+    // The first start of a new version says what changed.
+    const previous = settings().version;
+    if (previous !== app.getVersion()) { saveSettings({ version: app.getVersion() }); if (previous && packaged) showReleaseNotes(); }
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => { quitting = true; stopBackend(); });

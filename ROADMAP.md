@@ -21,21 +21,23 @@ What comes next for Seed Scout, in the order it is planned. Items are specific t
 - **Import.** In the desktop app, *File → Import saved seeds and catalogue…* copies them from a checkout or
   another install's data folder (the current ones are kept as `.bak`).
 
+- **Smaller download.** The bundled Java runtime holds only the modules world generation uses, Python comes
+  without OpenSSL, and Electron ships one language.
+- **App identity.** The app has its own icon, *Help → About Seed Scout*, and *What's new*, which also opens
+  by itself the first time a new version starts. Release notes list the changes since the previous version.
+
 ## Next
 
 1. **Teleport you can trust.** The standing spot is computed from terrain and piece boxes, not placed blocks.
    Check every structure type in a real world, fix the ones that land inside a block, and add a safe variant
    (a few blocks up, with slow falling) for the types that stay uncertain.
-2. **Faster terrain at the 200-block scale.** It is still the slowest view (about 6 seconds for full HD) because
-   it needs the most tiles and its samples are too far apart to share work. Options: fewer, larger samples at
-   that zoom, or a cheaper height pass.
+2. **Faster terrain at the 200-block scale.** Still the slowest view. Computing a whole tile over a slice of
+   the height range was tried and matched the game exactly, but was no faster than single columns (14.8 against
+   13.7 ms per tile), so it was not kept. What is left to try: a cheaper surface estimate (17% of a column's
+   cost), and sending likely-water columns straight to the aquifer pass instead of trying without first.
 3. **More than one Minecraft version.** Only 26.4-snapshot-2 works today. A version picker that lists what is
    installed and says which versions are supported, with the engine's version-specific calls isolated so a new
    snapshot is a small patch.
-4. **Smaller download.** The installer is about 136 MB. Trim the Java runtime further and drop unused
-   Electron locales.
-5. **App identity.** A real icon, an About box with version and licence, and release notes shown after an
-   update.
 
 ## Later
 

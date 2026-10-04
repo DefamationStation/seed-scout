@@ -67,7 +67,10 @@
     "publish": {
       "provider": "generic",
       "url": "https://raw.githubusercontent.com/DefamationStation/seed-scout/update-feed"
-    }
+    },
+    "electronLanguages": [
+      "en-US"
+    ]
   },
   "license": "MIT"
 }
