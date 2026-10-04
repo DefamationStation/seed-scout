@@ -622,6 +622,12 @@ public final class SeedEngine {
     static boolean is(Holder<Biome> biome,String key) { return biome.unwrapKey().orElseThrow().identifier().getPath().equals(key); }
     // mode: "terrain" prefilters each sample with the router's cheap surface estimate, "fast" tests Y=64 only,
     // "exhaustive" computes the terrain column at every sample. Every returned point is confirmed on the real column.
+    // The points a biome search looks at around its centre: every 32 blocks within the radius, nearest first.
+    static List<int[]> biomeSamples(int radius) {
+        return biomeOffsets.computeIfAbsent(radius,r->{var list=new ArrayList<int[]>();for(int dx=-r/32;dx<=r/32;dx++)for(int dz=-r/32;dz<=r/32;dz++)if(Math.hypot(dx*32,dz*32)<=r)list.add(new int[]{dx*32,dz*32});list.sort(Comparator.comparingDouble(a->Math.hypot(a[0],a[1])));return list;});
+    }
+    // A quart height well above any terrain, where the biome source gives the surface biome of a column.
+    static final int ABOVE_SURFACE=Math.floorDiv(316,4);
     static Map<String,Object> findBiome(Feature f,long seed,RandomState state,int x,int z,Job job,String mode) {
         if(!biomeNames.containsKey(f.key))throw new IllegalArgumentException("Unknown biome: "+f.key);
         int y=(f.key.equals("deep_dark")||f.key.equals("lush_caves")||f.key.equals("dripstone_caves")||f.key.equals("sulfur_caves"))?-32:64;
@@ -630,7 +636,7 @@ public final class SeedEngine {
         var resolver=generator.getBiomeSource().createUncachedResolver(state);
         var manager=new BiomeManager(resolver,BiomeManager.obfuscateSeed(seed));
         // A sampled scan can miss a tiny patch, but every returned biome point is real.
-        var offsets=biomeOffsets.computeIfAbsent(f.radius,r->{var list=new ArrayList<int[]>();for(int dx=-r/32;dx<=r/32;dx++)for(int dz=-r/32;dz<=r/32;dz++)if(Math.hypot(dx*32,dz*32)<=r)list.add(new int[]{dx*32,dz*32});list.sort(Comparator.comparingDouble(a->Math.hypot(a[0],a[1])));return list;});
+        var offsets=biomeSamples(f.radius);
         for(var offset:offsets) {
             if(job!=null && !job.running.get())return null;
             int bx=Math.floorDiv(x+offset[0],4)*4,bz=Math.floorDiv(z+offset[1],4)*4;
@@ -639,6 +645,11 @@ public final class SeedEngine {
             int qx=Math.floorDiv(bx,4),qz=Math.floorDiv(bz,4);
             if(cave||mode.equals("fast")) { if(!is(resolver.getNoiseBiome(qx,Math.floorDiv(y,4),qz),f.key))continue; }
             else if(!mode.equals("exhaustive")) {
+                // Above the surface first: one biome lookup instead of a surface estimate, which costs several times
+                // more. Height enters the biome choice through depth alone, and above the surface depth ranks the
+                // surface biomes as it does at the surface, so a point that fails here cannot pass below. Most
+                // points of a search that finds nothing stop at this line.
+                if(!is(resolver.getNoiseBiome(qx,ABOVE_SURFACE,qz),f.key))continue;
                 // The estimate costs a fraction of a terrain column but reads low, so test it and one step above.
                 int estimate=Math.round(state.sampleBlockValueUncached(surface,bx,0,bz));
                 if(!is(resolver.getNoiseBiome(qx,Math.floorDiv(estimate,4),qz),f.key)&&!is(resolver.getNoiseBiome(qx,Math.floorDiv(estimate+12,4),qz),f.key))continue;
@@ -659,6 +670,8 @@ public final class SeedEngine {
     static final class WorldJob {
         static final int REGION=4096;
         final long id,seed;final JsonObject request;final Feature anchor;final List<Feature> others;final int threads,maxMatches,range;final long limit;
+        // Structures that must be near, whose potential positions can rule a place out by arithmetic before anything costly runs.
+        final List<Feature> structureGates;final boolean group;
         volatile int ox,oz;
         final AtomicBoolean running=new AtomicBoolean(true);final AtomicInteger matches=new AtomicInteger(),finished=new AtomicInteger();final LongAdder regions=new LongAdder();
         long next;final java.util.TreeSet<Long> unfinished=new java.util.TreeSet<>();
@@ -681,10 +694,18 @@ public final class SeedEngine {
             // The anchor is the condition with the fewest candidates: ring structures (128 strongholds in a world), then the widest spacing.
             var roots=parsed.stream().filter(f->!f.exclude&&f.near==null&&f.or.isEmpty()).toList();
             ToDoubleFunction<Feature> rarity=f->set(f.key).placement() instanceof RandomSpreadStructurePlacement spread?spread.spacing():set(f.key).placement() instanceof ConcentricRingsStructurePlacement?1e9:1;
-            anchor=roots.stream().filter(f->f.kind.equals("structure")).max(Comparator.comparingDouble(rarity)).orElseGet(()->roots.stream().filter(f->f.kind.equals("biome")).findFirst().orElse(null));
+            // A structure asked for more than once is a group, and the group is what the places are; it takes precedence.
+            anchor=roots.stream().filter(f->f.kind.equals("structure")).max(Comparator.comparingInt((Feature f)->f.count>1?1:0).thenComparingDouble(rarity)).orElseGet(()->roots.stream().filter(f->f.kind.equals("biome")).findFirst().orElse(null));
             if(anchor==null)throw new IllegalArgumentException("Searching a seed needs at least one structure or biome you want to find, without alternatives.");
             // Conditions that were measured from the anchor are now simply measured from the place being tested.
-            others=parsed.stream().filter(f->f!=anchor).map(f->anchor.id!=null&&anchor.id.equals(f.near)?new Feature(f.kind,f.key,f.radius,f.minRadius,f.count,f.exclude,f.id,null,f.variants,f.placements,f.templates,f.or):f).toList();
+            var rest=new ArrayList<>(parsed.stream().filter(f->f!=anchor).map(f->anchor.id!=null&&anchor.id.equals(f.near)?new Feature(f.kind,f.key,f.radius,f.minRadius,f.count,f.exclude,f.id,null,f.variants,f.placements,f.templates,f.or):f).toList());
+            // A count above one on the anchor asks for a group of the same structure: that many within its distance of
+            // one of them. The group is an ordinary condition measured from the anchor, which counts itself.
+            group=anchor.kind.equals("structure")&&anchor.count>1;
+            if(group)rest.add(0,new Feature("structure",anchor.key,anchor.radius,0,anchor.count,false,null,null,anchor.variants,anchor.placements,anchor.templates,List.of()));
+            others=List.copyOf(rest);
+            var needed=others.stream().filter(f->!f.exclude&&f.near==null&&f.or.isEmpty()).toList();
+            structureGates=needed.stream().filter(f->f.kind.equals("structure")&&set(f.key).placement() instanceof RandomSpreadStructurePlacement).toList();
             int rings=Math.min((int)Math.ceil((double)range/REGION)+1,(WORLD_EDGE*2)/REGION+2);
             limit=(2L*rings+1)*(2L*rings+1);
             int from=r.has("fromRing")?Math.max(0,r.get("fromRing").getAsInt()):0;
@@ -714,6 +735,12 @@ public final class SeedEngine {
             },"world-worker-"+i);
             worker.setPriority(Thread.NORM_PRIORITY-1);worker.start();}
         }
+        // Whether enough potential positions of a structure lie at the wanted distance: placement arithmetic only.
+        boolean spaced(Feature f,ChunkGeneratorStructureState structState,int x,int z) {
+            var placement=set(f.key).placement();
+            int minX=Math.floorDiv(x-f.radius-32,16),maxX=Math.floorDiv(x+f.radius+32,16),minZ=Math.floorDiv(z-f.radius-32,16),maxZ=Math.floorDiv(z+f.radius+32,16);
+            return candidates(placement,seed,structState,minX,maxX,minZ,maxZ).filter(c->{var at=placement.getLocatePos(c);double d=Math.hypot(at.getX()-x,at.getZ()-z);return d>=f.minRadius&&d<=f.radius;}).limit(f.count).count()>=f.count;
+        }
         void scan(long index,RandomState state,ChunkGeneratorStructureState structState) {
             int[] cell=region(index);
             long left=(long)ox+(long)cell[0]*REGION-REGION/2,top=(long)oz+(long)cell[1]*REGION-REGION/2;
@@ -721,30 +748,46 @@ public final class SeedEngine {
             if(left>WORLD_EDGE||top>WORLD_EDGE||left+REGION<-WORLD_EDGE||top+REGION<-WORLD_EDGE)return;
             double nearX=Math.max(0,Math.max(left-ox,ox-(left+REGION))),nearZ=Math.max(0,Math.max(top-oz,oz-(top+REGION)));
             if(Math.hypot(nearX,nearZ)>range)return;
-            int cx=(int)(left+REGION/2),cz=(int)(top+REGION/2);
-            var anchors=new ArrayList<Map<String,Object>>();
+            // 1. Where the anchor could be, from placement alone. Nothing is checked against terrain yet.
+            var spots=new ArrayList<int[]>();List<Map<String,Object>> biomeAnchors=null;
             if(anchor.kind.equals("structure")) {
-                var wide=new Feature("structure",anchor.key,REGION*724/1024+2,0,1,false,null,null,anchor.variants,anchor.placements,anchor.templates,List.of());
-                ONLY_INSIDE.set(new int[]{(int)left,(int)top,(int)(left+REGION),(int)(top+REGION)});
-                try { findStructures(wide,seed,state,structState,cx,cz,null,anchors,Integer.MAX_VALUE,false,null); }
-                finally { ONLY_INSIDE.remove(); }
-            } else biomePlaces(state,(int)left,(int)top,anchors);
-            for(var candidate:anchors) {
+                var placement=set(anchor.key).placement();
+                candidates(placement,seed,structState,Math.floorDiv((int)left-32,16),Math.floorDiv((int)left+REGION+32,16),Math.floorDiv((int)top-32,16),Math.floorDiv((int)top+REGION+32,16)).forEach(c->{
+                    var at=placement.getLocatePos(c);
+                    if(at.getX()>=left&&at.getX()<left+REGION&&at.getZ()>=top&&at.getZ()<top+REGION)spots.add(new int[]{at.getX(),at.getZ()});
+                });
+            } else {
+                biomeAnchors=new ArrayList<>();biomePlaces(state,(int)left,(int)top,biomeAnchors);
+                for(var place:biomeAnchors)spots.add(new int[]{((Number)place.get("x")).intValue(),((Number)place.get("z")).intValue()});
+            }
+            spots.removeIf(at->Math.hypot(at[0]-ox,at[1]-oz)>range||Math.abs(at[0])>WORLD_EDGE||Math.abs(at[1])>WORLD_EDGE||known.contains(((long)at[0]<<32)^(at[1]&0xffffffffL)));
+            // 2. Other structures that must be near: is there even a potential position at the right distance?
+            for(var gate:structureGates)spots.removeIf(at->!spaced(gate,structState,at[0],at[1]));
+            if(spots.isEmpty())return;
+            // 3. What is left gets the real checks: the anchor's generation point, every condition around it, then the build.
+            var exact=anchor.kind.equals("structure")?new Feature("structure",anchor.key,8,0,1,false,null,null,anchor.variants,anchor.placements,anchor.templates,List.of()):null;
+            for(int i=0;i<spots.size();i++) {
                 if(!running.get())return;
-                int x=((Number)candidate.get("x")).intValue(),z=((Number)candidate.get("z")).intValue();
-                double distance=Math.hypot(x-ox,z-oz);
-                if(distance>range||Math.abs(x)>WORLD_EDGE||Math.abs(z)>WORLD_EDGE||known.contains(((long)x<<32)^(z&0xffffffffL)))continue;
+                int x=spots.get(i)[0],z=spots.get(i)[1];
+                var scratch=new ArrayList<Map<String,Object>>();
+                if(exact!=null&&findStructures(exact,seed,state,structState,x,z,null,scratch,1,false,null)<1)continue;
                 var found=around(seed,state,structState,others,x,z,request,null);
                 if(found==null)continue;
                 var features=new ArrayList<Map<String,Object>>();
-                if(anchor.kind.equals("structure")) {
+                if(group) {
+                    // The group came back from the conditions, the anchor among its members. Each member finds the same
+                    // group in turn, so it is reported once: from the member nearest the origin.
+                    ToDoubleFunction<Map<String,Object>> fromOrigin=m->Math.hypot(((Number)m.get("x")).intValue()-ox,((Number)m.get("z")).intValue()-oz);
+                    var members=found.stream().filter(m->anchor.key.equals(m.get("key"))&&!m.containsKey("near")).toList();
+                    double own=Math.hypot(x-ox,z-oz);
+                    if(members.stream().anyMatch(m->fromOrigin.applyAsDouble(m)<own-1e-9))continue;
+                } else if(exact!=null) {
                     // The cheap generation-point check found it; the start is built now, as every reported structure is.
-                    var exact=new Feature("structure",anchor.key,8,0,1,false,null,null,anchor.variants,anchor.placements,anchor.templates,List.of());
                     if(findStructures(exact,seed,state,structState,x,z,null,features,1,true,null)<1)continue;
-                } else features.add(candidate);
+                } else features.add(biomeAnchors.get(i<biomeAnchors.size()?i:0));
                 features.addAll(found);
                 int count=matches.incrementAndGet();
-                if(count<=maxMatches)emit(Map.of("type","place","id",id,"data",Map.of("x",x,"y",features.get(0).get("y"),"z",z,"distance",Math.round(distance),"features",features)));
+                if(count<=maxMatches)emit(Map.of("type","place","id",id,"data",Map.of("x",x,"y",features.get(0).get("y"),"z",z,"distance",Math.round(Math.hypot(x-ox,z-oz)),"features",features)));
                 if(count>=maxMatches){running.set(false);return;}
             }
         }

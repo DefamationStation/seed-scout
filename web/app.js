@@ -563,6 +563,7 @@ function worldHint() {
   $('world-hint').textContent = !wanted.length ? 'Choose what to look for below.'
     : `Finds every place in this seed with ${wanted.map(f => label(f.key).toLowerCase()).join(', ')}${[...chosen.values()].some(f => f.mode === 'exclude') ? ' and none of what you avoid' : ''}. `
       + (chosen.size > 1 ? 'The rarest structure in the list is the place; the other distances are measured from it, not from spawn. ' : '')
+      + ([...chosen.values()].some(f => f.kind === 'structure' && f.mode !== 'exclude' && f.count > 1) ? 'A structure with a count above 1 is looked for as a group: that many within its distance of one of them. ' : wanted.some(f => f.kind === 'structure') ? 'Raise the count of a structure to look for groups of it. ' : '')
       + 'Places come nearest first. The whole world is 60 million blocks across, so reaching the border can take days; you can stop and keep searching later.';
 }
 document.querySelectorAll('[data-search-mode]').forEach(b => { b.onclick = () => { searchMode = b.dataset.searchMode; try { localStorage.setItem('seed-scout-search-mode', searchMode); } catch { } syncSearchMode(); }; });

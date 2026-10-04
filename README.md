@@ -96,11 +96,18 @@ spawn, or coordinates you give).
   the widest-spaced structure), or the first biome when there is no structure. Every anchor found is a candidate
   place, and your other conditions are measured from it with their own distances, exactly as a seed search
   measures them from the spawn. Avoid conditions and conditions measured from another one work the same way.
-  The anchor's own distance and count are not used.
+  With a count of 1 the anchor's own distance is not used.
+- **Groups of one structure.** Give a structure a count above 1 and it becomes the anchor as a group: that many
+  of it within its distance of one of them ("3 ancient cities, 0 to 2,000 blocks"). Each group is reported once,
+  from the member nearest the origin, with every member listed. *Search out to* limits where that member is;
+  the others may lie just beyond it. Other conditions are measured from that member.
 - **How far.** *Search out to* goes from 10,000 blocks to the whole world (29,999,984 blocks each way). The world
   is cut into 4,096-block regions taken in a square spiral from the origin, on as many workers as Settings allows.
-- **How long.** On this PC a group search covers 300–400 regions a second: 100,000 blocks in a few seconds,
-  1,000,000 in about ten minutes, the world border in about a week. Asking for every village with no other condition
+- **How long.** It depends on the anchor: every potential position of it is tested with the game's own
+  generation check, about 0.4 ms each. On this PC with 16 workers, a block of 2,209 regions took 0.5 s for a
+  woodland mansion group, 5 s for a village group and 8–11 s for shipwreck or ancient city groups. That puts
+  1,000,000 blocks at seconds to minutes, and the world border at half a day for the rarest anchors and one to
+  two weeks for common ones. Asking for every village with no other condition
   is far slower (about 5 regions a second), because every reported structure is fully built.
 - **Stopping and continuing.** It stops after the number of places you set (up to 500 at a time) or when you
   press Stop; *Keep searching* carries on from the ring it reached. Places and progress are saved in
@@ -108,6 +115,10 @@ spawn, or coordinates you give).
 - **Biomes as the anchor** are sampled every 64 blocks on the biome source and confirmed on real terrain; one
   place is reported per region, the patch nearest the origin.
 - **Opening a place** shows the seed on the map at that spot with its features marked.
+
+Before any costly check, a place is dropped when another structure it needs has no potential position at the
+right distance; that is placement arithmetic and cannot lose a match. A coarse biome sample of each region was
+tried as a faster way to skip regions and was not kept: it lost 6–13% of the places in testing.
 
 A seed search and a search inside a seed cannot run at the same time.
 
@@ -175,6 +186,9 @@ The catalogue is stored in `catalogue.db` (SQLite) next to `app.py`.
   Y is its bounding-box minimum, not necessarily an entrance or walkable height.
 - Spawn is the generator's initial spawn region. Final player spawn can shift after terrain checks.
   Distances are horizontal distances from that region, not a guarantee from the final player position.
+- Biome searches look at each sample above the surface first (one lookup on the biome source) and only estimate
+  the terrain where that gives the wanted biome. The matches are the same; searches for a biome that is mostly
+  absent run two to five times faster.
 - Biome searches sample every 32 blocks. Every reported point is confirmed at the snapshot's actual
   base surface height with Minecraft's seeded block-biome boundary resolver. Cave targets use Y=-32.
   Tiny patches or caves at other heights can still be missed. The three modes differ in which samples

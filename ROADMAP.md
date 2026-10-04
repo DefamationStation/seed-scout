@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Seed Scout stands after 0.1.15 and what comes next. The plan is short on purpose: a few target wins, in
+Where Seed Scout stands after 0.1.16 and what comes next. The plan is short on purpose: a few target wins, in
 order, each with what "done" looks like.
 
 ## Shipped so far
@@ -20,29 +20,33 @@ order, each with what "done" looks like.
 | 0.1.13 | Predicted water placement for shipwrecks (floating, shallow, deck underwater, beached), checked against the game's own placement routine |
 | 0.1.14 | Conditions on the spawn itself (spawn biome, either/or alternatives, slime chunks near the origin); a self-test that drives every desktop dialog, run as a smoke test before each release |
 | 0.1.15 | Search inside one seed: every place where the conditions hold, nearest first, out to the world border; stop, keep searching later, progress kept across restarts |
+| 0.1.16 | Groups of one structure in the in-seed search ("3 ancient cities within 2,000 blocks"); biome searches two to five times faster with the same matches |
 
 Before that: the seed search itself, the terrain map with relief and contours, structure layers, saved seeds
 and the rare-find catalogue.
 
 ## Now
 
-### 1. Whole-seed search, second pass
+### 1. Whole-seed search, speed
 
-0.1.15 added *Inside one seed*: every place in one world where the conditions hold, nearest first, out to the
-world border. What it does not do yet:
+A search inside a seed is bound by the game's own generation check, about 0.4 ms for every potential position of
+the anchor structure, 60 to 110 of them in each 4,096-block region. On this PC that is half a day to the world
+border for the rarest anchors and one to two weeks for common ones. What was tried in 0.1.16:
 
-- **Speed for the whole world.** A group search covers about 300–400 regions (4,096 blocks square) a second on
-  this PC, which reaches 100,000 blocks in a few seconds, 1,000,000 in about ten minutes and the world border in
-  about a week. Rarer anchors are faster. The next step is skipping regions that cannot match: a coarse
-  climate pass for biome conditions, and testing the cheapest other condition before the anchor is checked.
-- **Same-type groups:** "three ancient cities within 2,000 blocks of each other". The anchor is one structure;
-  a count of the same type around it is not offered.
-- **Biome anchors report one place per region** (4,096 blocks), the patch nearest the origin, and sample every
-  64 blocks, so a patch smaller than that can be passed over.
-- **Many seeds, anywhere in each:** the two modes are separate. Combining them ("seeds that have this group
-  within 5,000 blocks of spawn") is the natural follow-up.
+- **Kept:** placement arithmetic before any costly check (exact), and a cheaper first test inside the biome
+  search (exact; two to five times faster where the biome is mostly absent, in seed searches too).
+- **Not kept:** skipping regions on a coarse biome sample (lost 6–13% of places), and an exact biome pre-check
+  ahead of the anchor (correct, but no faster than what it replaced).
 
-*Done when:* a whole-world group search finishes in about a day, and same-type groups can be asked for.
+What is left to try, each a larger piece of work:
+
+- **A cheaper height for the generation check.** A third of the check is one full terrain column. The map
+  already has a column that costs a third as much and differs in about 3 columns per million; used only as a
+  first test, with the game's own check still deciding what is reported.
+- **Confirming places on demand.** Building each reported structure costs about 0.3 s for a village. Reporting
+  on the generation check and building when a place is opened would help searches with many places.
+- **Many seeds, anywhere in each:** the two modes are separate. "Seeds that have this group within 5,000
+  blocks of spawn" is the natural combination.
 
 ## Later
 
