@@ -266,6 +266,12 @@ snapshot: five village types, normal/badlands mineshafts, cold/warm ruins, regul
 18 camp variants, and six portal biome variants. Find treats selected subcategories as alternatives
 within one family condition; **Any variant** accepts the entire family. Layers filters the family's markers without
 duplicating them, and saves those filters with the layer settings and presets.
+The shipwreck chooser also offers all 20 shipwreck templates from this snapshot. They distinguish whole ships (including
+the mast variant), front and back halves, upright/sideways/upside-down orientations, and degraded or
+non-degraded condition. In Find and Layers, location type and template apply to the same ship;
+multiple selected templates are alternatives. A whole-ship template can still be submerged or buried:
+the template filter does not guarantee a ship floating at sea level. The inspector shows the native
+template chosen by Minecraft, and template filters are preserved in saved conditions and layer presets.
 The ruined portal chooser also offers five placement types: **on land surface**, **partly buried**,
 **on ocean floor**, **in mountain**, and **underground**. These use the actual `VerticalPlacement` saved
 by Minecraft's generated portal piece; they are not inferred from biome or height. Swamp portals use

@@ -1,0 +1,31 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('web/map.js','utf8').replace('    show, clear, on, flyTo,',
+  '    test: { variantShown },\n    show, clear, on, flyTo,') + '\nglobalThis.map=worldMap;';
+const context = {structuredClone,Map,Set,Date,Math,catalog:{sets:['shipwrecks']},terrain:{},
+  localStorage:{getItem:()=>null,setItem:()=>{}},setTimeout:()=>1,clearTimeout:()=>{},requestAnimationFrame:()=>1,$:()=>({})};
+vm.runInNewContext(source,context);
+const map=context.map;
+const ship={key:'shipwrecks',detail:'shipwreck',shipwreckTemplate:'shipwreck/with_mast'};
+const feature={key:'shipwrecks',templates:['shipwreck/with_mast','shipwreck/rightsideup_full'],variants:['shipwreck']};
+assert(map.test.variantShown(feature,ship));
+assert(map.test.variantShown(feature,{...ship,shipwreckTemplate:'shipwreck/rightsideup_full'}));
+assert(!map.test.variantShown(feature,{...ship,shipwreckTemplate:'shipwreck/with_mast_degraded'}));
+assert(!map.test.variantShown(feature,{...ship,detail:'shipwreck_beached'}));
+assert(!map.test.variantShown({...feature,templates:[]},ship));
+assert(map.test.variantShown({key:'shipwrecks'},ship));
+map.setFeature('shipwrecks',{templates:feature.templates,variants:feature.variants,on:true,from:4});
+const saved=map.snapshot();
+assert.deepEqual(Array.from(saved.features.shipwrecks.templates),feature.templates);
+assert.deepEqual(Array.from(saved.features.shipwrecks.variants),feature.variants);
+saved.features.shipwrecks.templates.push('shipwreck/sideways_full');
+assert.equal(map.features()[0].templates.length,2,'Saving a preset must not share its filter arrays with the map');
+map.applyLayers(saved);
+assert(map.test.variantShown(map.features()[0],{...ship,shipwreckTemplate:'shipwreck/sideways_full'}));
+const app=fs.readFileSync('web/app.js','utf8');
+vm.runInNewContext(app.slice(app.indexOf('function shipTemplateName('),app.indexOf('const familyName ='))+'\nglobalThis.templateName=shipTemplateName;',context);
+assert.equal(context.templateName('shipwreck/with_mast'),'Whole ship with mast · Upright · Non-degraded');
+assert.equal(context.templateName('shipwreck/upsidedown_fronthalf_degraded'),'Front half · Upside down · Degraded');
+assert.equal(context.templateName('shipwreck/sideways_backhalf'),'Back half · Sideways · Non-degraded');
+console.log('Ship template/location intersection, alternatives, readable names, and preset round trips passed.');

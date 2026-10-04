@@ -96,6 +96,13 @@ const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks
 const PORTAL_FAMILIES = ['ruined_portals', 'huge_ruined_portals'];
 const isPortalFamily = family => PORTAL_FAMILIES.includes(family);
 const PORTAL_PLACEMENTS = ['on_land_surface', 'partly_buried', 'on_ocean_floor', 'in_mountain', 'underground'];
+const SUBCATEGORY_FILTERS = ['variants', 'placements', 'templates'];
+function shipTemplateName(template) {
+  const name = template.split('/').pop(), degraded = name.endsWith('_degraded');
+  const shape = name.startsWith('with_mast') ? 'Whole ship with mast' : name.includes('_fronthalf') ? 'Front half' : name.includes('_backhalf') ? 'Back half' : 'Whole ship';
+  const orientation = name.startsWith('upsidedown') ? 'Upside down' : name.startsWith('sideways') ? 'Sideways' : 'Upright';
+  return `${shape} · ${orientation} · ${degraded ? 'Degraded' : 'Non-degraded'}`;
+}
 const familyName = key => ({ villages: 'Villages', mineshafts: 'Mineshafts', ocean_ruins: 'Ocean ruins', shipwrecks: 'Shipwrecks', abandoned_camp: 'Abandoned camps', ruined_portals: 'Ruined portals (any size)', huge_ruined_portals: 'Huge ruined portals' })[key] || label(key);
 function variantName(family, detail) {
   if (family === 'mineshafts') return detail === 'mineshaft' ? 'Normal' : 'Badlands';
@@ -105,6 +112,7 @@ function variantName(family, detail) {
   return (prefix ? detail.replace(prefix, '') : detail).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 }
 const familyVariants = family => catalog?.structureVariants?.[family] || [];
+const familyTemplates = family => catalog?.structureTemplates?.[family] || [];
 const familyKeys = family => [family, ...familyVariants(family), ...(isPortalFamily(family) ? PORTAL_PLACEMENTS.map(p => `${family}_${p}`).filter(k => catalog?.sets.includes(k)) : [])];
 const rootStructure = key => !key.includes('__') && !PORTAL_FAMILIES.some(family => key.startsWith(`${family}_`));
 function featureStyle(kind, key) {
@@ -192,9 +200,9 @@ function mergeFamilyConditions(family, force = false) {
   if (!force && new Set(entries.map(([, f]) => policy(f))).size > 1) return;
   const base = entries.find(([, f]) => f.key === family)?.[1], next = { ...(base || entries[0][1]), key: family };
   delete next.id;
-  for (const field of ['variants', 'placements']) {
-    const values = base ? base[field] : entries.map(([, f]) => field === 'variants' ? catalog.variantDetails[f.key] : f.key.startsWith(`${family}_`) && !f.key.includes('__') ? f.key.slice(family.length + 1) : null).filter(Boolean);
-    const all = field === 'variants' ? familyVariants(family).map(k => catalog.variantDetails[k]) : PORTAL_PLACEMENTS;
+  for (const field of SUBCATEGORY_FILTERS) {
+    const values = base ? base[field] : field === 'templates' ? [] : entries.map(([, f]) => field === 'variants' ? catalog.variantDetails[f.key] : f.key.startsWith(`${family}_`) && !f.key.includes('__') ? f.key.slice(family.length + 1) : null).filter(Boolean);
+    const all = field === 'variants' ? familyVariants(family).map(k => catalog.variantDetails[k]) : field === 'templates' ? familyTemplates(family) : PORTAL_PLACEMENTS;
     if (!values?.length || all.every(v => values.includes(v))) delete next[field];
     else next[field] = [...new Set(values)];
   }
@@ -206,7 +214,8 @@ function mergeFamilyConditions(family, force = false) {
 function familyFilterDescription(f) {
   if (!f) return '';
   return [Array.isArray(f.variants) ? f.variants.length === 1 ? variantName(f.key, f.variants[0]) : f.variants.length ? `${f.variants.length} variants` : 'No variants selected' : '',
-    Array.isArray(f.placements) ? f.placements.length ? f.placements.map(label).join(' or ') : 'No placements selected' : ''].filter(Boolean).join(' · ');
+    Array.isArray(f.placements) ? f.placements.length ? f.placements.map(label).join(' or ') : 'No placements selected' : '',
+    Array.isArray(f.templates) ? f.templates.length === 1 ? shipTemplateName(f.templates[0]) : f.templates.length ? `${f.templates.length} templates` : 'No templates selected' : ''].filter(Boolean).join(' · ');
 }
 const conditionName = f => `${label(f.key)}${familyFilterDescription(f) ? ` (${familyFilterDescription(f)})` : ''}`;
 // The starting seed is deliberately not remembered: left blank, every search starts from a new random seed.
@@ -257,7 +266,7 @@ function renderChosen() {
   syncButtons();
 }
 function syncButtons() {
-  const emptyFilter = [...chosen.values()].some(f => f.variants?.length === 0 || f.placements?.length === 0);
+  const emptyFilter = [...chosen.values()].some(f => SUBCATEGORY_FILTERS.some(field => f[field]?.length === 0));
   $('start').disabled = !catalog || state.running || !chosen.size || emptyFilter;
   $('inspect').disabled = !catalog || !chosen.size || emptyFilter;
 }
@@ -307,6 +316,7 @@ function openSubcategories(family, mode) {
   subcategoryContext = { family, mode };
   $('subcategory-title').textContent = familyName(family);
   $('subcategory-hint').textContent = (mode === 'find' ? 'Selected variants are alternatives in one search condition. For portals, biome and placement must match the same portal.' : isPortalFamily(family) ? 'Choose which portals appear on the map. Biome and placement filters apply together.' : 'Choose which variants appear on the map.') + (isPortalFamily(family) ? ' Placement names are Minecraft generation types: swamp portals use “On ocean floor” even on dry land.' : '');
+  if (family === 'shipwrecks') $('subcategory-hint').textContent = 'Location type and template must match the same ship. Selected templates are alternatives. Whole ships can still be submerged; some templates only generate in regular shipwrecks.';
   renderSubcategories();
   $('subcategory-dialog').showModal();
 }
@@ -314,11 +324,13 @@ function renderSubcategories() {
   const { family, mode } = subcategoryContext, config = mode === 'find' ? chosen.get(`structure:${family}`) : worldMap.features().find(f => f.key === family) || {};
   $('subcategory-options').classList.toggle('portal-options', isPortalFamily(family));
   const variants = familyVariants(family).map(key => ({ key, value: catalog.variantDetails[key], name: variantName(family, catalog.variantDetails[key]) }));
-  const groups = [{ title: isPortalFamily(family) ? 'Biome variants' : 'Variants', field: 'variants', options: variants }];
+  const groups = [{ title: isPortalFamily(family) ? 'Biome variants' : family === 'shipwrecks' ? 'Location types' : 'Variants', field: 'variants', options: variants }];
   if (isPortalFamily(family)) groups.push({ title: 'Placements', field: 'placements', options: PORTAL_PLACEMENTS.filter(p => catalog?.sets.includes(`${family}_${p}`)).map(p => ({ key: `${family}_${p}`, value: p, name: label(p) })) });
+  const templates = familyTemplates(family);
+  if (templates.length) groups.push({ title: 'Ship templates', field: 'templates', options: templates.map(t => ({ key: family, value: t, name: shipTemplateName(t) })) });
   const option = (name, key, field, value, checked) => `<label class="subcategory-option"><input type="checkbox" data-subkey="${esc(key)}" data-subfield="${field}" value="${esc(value)}" ${checked ? 'checked' : ''}><span>${esc(name)}</span></label>`;
   const selected = (field, value) => !!config && (!Array.isArray(config[field]) || (value === '*' ? groups.find(g => g.field === field).options.every(o => config[field].includes(o.value)) : config[field].includes(value)));
-  $('subcategory-options').innerHTML = (mode === 'find' ? option(isPortalFamily(family) ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && !config.variants && !config.placements) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
+  $('subcategory-options').innerHTML = (mode === 'find' ? option(templates.length ? 'Any location type or template' : isPortalFamily(family) ? 'Any variant or placement' : 'Any variant', family, 'any', family, !!config && SUBCATEGORY_FILTERS.every(field => !config[field])) : '') + groups.map(g => `<fieldset><legend>${g.title}</legend>${option(`All ${g.title.toLowerCase()}`, family, g.field, '*', selected(g.field, '*'))}${g.options.map(o => option(o.name, o.key, g.field, o.value, selected(g.field, o.value))).join('')}</fieldset>`).join('');
 }
 $('subcategory-options').onchange = e => {
   const el = e.target.closest('[data-subkey]'); if (!el || !subcategoryContext) return;
@@ -327,7 +339,7 @@ $('subcategory-options').onchange = e => {
     const id = `structure:${family}`, current = chosen.get(id), field = el.dataset.subfield;
     if (el.checked && !current && chosen.size >= 12) { el.checked = false; toast('Choose up to 12 search conditions.', true); return; }
     if (field === 'any') {
-      if (el.checked) { const next = { ...(current || condition('structure', family)) }; delete next.variants; delete next.placements; chosen.set(id, next); }
+      if (el.checked) { const next = { ...(current || condition('structure', family)) }; for (const field of SUBCATEGORY_FILTERS) delete next[field]; chosen.set(id, next); }
       else chosen.delete(id);
     } else {
       const options = [...$('subcategory-options').querySelectorAll(`[data-subfield="${field}"]`)].filter(o => o.value !== '*');
@@ -341,7 +353,7 @@ $('subcategory-options').onchange = e => {
     const field = el.dataset.subfield, options = [...$('subcategory-options').querySelectorAll(`[data-subfield="${field}"]`)].filter(o => o.value !== '*');
     const config = worldMap.features().find(f => f.key === family);
     const values = el.value === '*' ? (el.checked ? options.map(o => o.value) : []) : options.filter(o => o.checked).map(o => o.value);
-    worldMap.setFeature(family, { [field]: values, on: values.length > 0 && (field === 'variants' ? config.placements?.length !== 0 : config.variants?.length !== 0) });
+    worldMap.setFeature(family, { [field]: values, on: values.length > 0 && SUBCATEGORY_FILTERS.every(other => other === field || config[other]?.length !== 0) });
     presetChanged(); renderLayers();
   }
   renderSubcategories();
@@ -673,7 +685,7 @@ function renderFeatureNotes() {
 $('panel').addEventListener('change', e => {
   const el = e.target;
   if (el.dataset.layer) { worldMap.setLayer(el.dataset.layer, el.checked); if (el.dataset.layer === 'structures') $('feature-layers').classList.toggle('off', !el.checked); }
-  else if (el.dataset.feature) { worldMap.setFeature(el.dataset.feature, { on: el.checked, ...(el.checked && STRUCTURE_FAMILIES.includes(el.dataset.feature) ? { variants: null, placements: null } : {}) }); renderLayers(); }
+  else if (el.dataset.feature) { worldMap.setFeature(el.dataset.feature, { on: el.checked, ...(el.checked && STRUCTURE_FAMILIES.includes(el.dataset.feature) ? { variants: null, placements: null, templates: null } : {}) }); renderLayers(); }
   else if (el.dataset.from) worldMap.setFeature(el.dataset.from, { from: Number(el.value) });
   else return;
   presetChanged(); renderFeatureNotes();
@@ -683,7 +695,7 @@ $('feature-layers').onclick = e => {
   if (arrow) { openSubcategories(arrow.dataset.layerSubcategories, 'layers'); return; }
   const button = e.target.closest('[data-layer-category]'); if (!button) return;
   const key = button.dataset.layerCategory, feature = worldMap.features().find(f => f.key === key);
-  worldMap.setFeature(key, { on: !feature.on, ...(!feature.on ? { variants: null, placements: null } : {}) });
+  worldMap.setFeature(key, { on: !feature.on, ...(!feature.on ? { variants: null, placements: null, templates: null } : {}) });
   presetChanged(); renderLayers();
 };
 $('basemaps').onclick = e => { const b = e.target.closest('[data-basemap]'); if (!b) return; worldMap.setLayer('basemap', b.dataset.basemap); presetChanged(); renderLayers(); };

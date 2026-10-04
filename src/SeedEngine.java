@@ -32,6 +32,7 @@ import net.minecraft.world.level.levelgen.structure.structures.OceanMonumentStru
 import net.minecraft.world.level.levelgen.structure.structures.StrongholdPieces;
 import net.minecraft.world.level.levelgen.structure.structures.StrongholdStructure;
 import net.minecraft.world.level.levelgen.structure.structures.RuinedPortalPiece;
+import net.minecraft.world.level.levelgen.structure.structures.ShipwreckPieces;
 import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceSerializationContext;
 import net.minecraft.world.level.levelgen.structure.templatesystem.*;
 import net.minecraft.world.level.storage.LevelStorageSource;
@@ -48,6 +49,7 @@ public final class SeedEngine {
     static final Map<String,Holder.Reference<StructureSet>> sets=new TreeMap<>();
     static final Map<String,String> variantDetails=new TreeMap<>();
     static final Map<String,List<String>> structureVariants=new TreeMap<>();
+    static final Map<String,List<String>> structureTemplates=new TreeMap<>();
     static LevelHeightAccessor heights;
     static volatile Job active;
     static final ScheduledExecutorService PROGRESS=Executors.newSingleThreadScheduledExecutor(r->{var t=new Thread(r,"search-progress");t.setDaemon(true);return t;});
@@ -100,8 +102,9 @@ public final class SeedEngine {
             }
             structureVariants.put(family,variants);
         }
+        structureTemplates.put("shipwrecks",templates.listTemplates().filter(id->id.getNamespace().equals("minecraft")&&id.getPath().startsWith("shipwreck/")).map(Identifier::getPath).distinct().sorted().toList());
         generator.getBiomeSource().possibleBiomes().forEach(h->h.unwrapKey().ifPresent(k->biomeNames.put(k.identifier().getPath(),k.identifier().toString())));
-        emit(Map.of("type","ready","version",SharedConstants.getCurrentVersion().id(),"sets",sets.keySet(),"biomes",biomeNames.keySet(),"cores",CORES,"mapWorkers",MAP_THREADS,"structureVariants",structureVariants,"variantDetails",variantDetails));
+        emit(Map.of("type","ready","version",SharedConstants.getCurrentVersion().id(),"sets",sets.keySet(),"biomes",biomeNames.keySet(),"cores",CORES,"mapWorkers",MAP_THREADS,"structureVariants",structureVariants,"variantDetails",variantDetails,"structureTemplates",structureTemplates));
     }
     public static void main(String[] args) throws Exception {
         initialize();
@@ -253,12 +256,13 @@ public final class SeedEngine {
             while(candidates.hasNext()) {
                 var c=candidates.next();var pos=placement.getLocatePos(c);
                 if(pos.getX()<x||pos.getX()>=x+size||pos.getZ()<z||pos.getZ()>=z+size)continue;
-                var hit=startAt(set,seed,state,structState,climate,c,set==set("ruined_portals"));
+                var hit=startAt(set,seed,state,structState,climate,c,set==set("ruined_portals")||set==set("shipwrecks"));
                 if(hit==null||!portalMatches(key,hit,set,seed,state,structState,climate,c))continue;
                 // Only a match beyond the cap proves the list is incomplete.
                 if(++count>TILE_CAP){limited.add(key);break;}
                 var marker=new HashMap<String,Object>(Map.of("kind","structure","key",key,"detail",hit.detail(),"x",pos.getX(),"y",hit.y,"z",pos.getZ(),"confidence","Snapshot generation point confirmed"));
                 if(set==set("ruined_portals"))portalFacts(marker,hit);
+                if(set==set("shipwrecks"))marker.put("shipwreckTemplate",shipwreckTemplate(hit));
                 found.add(marker);
             }
         }
@@ -275,6 +279,7 @@ public final class SeedEngine {
         var result=new LinkedHashMap<String,Object>(Map.of("valid",true,"kind","structure","key",key,"detail",hit.detail(),"x",x,"y",hit.y,"z",z,"confidence","Snapshot structure start confirmed",
             "box",Map.of("minX",box.minX(),"minY",box.minY(),"minZ",box.minZ(),"maxX",box.maxX(),"maxY",box.maxY(),"maxZ",box.maxZ()),"pieces",hit.start.getPieces().size()));
         if(set==set("ruined_portals"))portalFacts(result,hit);
+        if(set==set("shipwrecks"))result.put("shipwreckTemplate",shipwreckTemplate(hit));
         result.put("stand",stand(hit,state));
         return result;
     }
@@ -304,13 +309,13 @@ public final class SeedEngine {
     }
     // exclude: the seed passes only when nothing matches; otherwise it needs count matches between minRadius and radius.
     // near names the id of another condition: this one is then measured from each of that condition's matches.
-    record Feature(String kind,String key,int radius,int minRadius,int count,boolean exclude,String id,String near,List<String> variants,List<String> placements) {}
+    record Feature(String kind,String key,int radius,int minRadius,int count,boolean exclude,String id,String near,List<String> variants,List<String> placements,List<String> templates) {}
     static List<String> filterValues(JsonObject f,String key) {
         return f.has(key)&&!f.get(key).isJsonNull()?StreamSupport.stream(f.getAsJsonArray(key).spliterator(),false).map(JsonElement::getAsString).toList():List.of();
     }
     static List<Feature> parseFeatures(JsonArray wanted) {
         var result=new ArrayList<Feature>();
-        for(var item:wanted) {var f=item.getAsJsonObject();result.add(new Feature(f.get("kind").getAsString(),f.get("key").getAsString(),f.get("radius").getAsInt(),f.has("minRadius")?f.get("minRadius").getAsInt():0,f.has("count")?f.get("count").getAsInt():1,f.has("mode")&&f.get("mode").getAsString().equals("exclude"),f.has("id")?f.get("id").getAsString():null,f.has("near")?f.get("near").getAsString():null,filterValues(f,"variants"),filterValues(f,"placements")));}
+        for(var item:wanted) {var f=item.getAsJsonObject();result.add(new Feature(f.get("kind").getAsString(),f.get("key").getAsString(),f.get("radius").getAsInt(),f.has("minRadius")?f.get("minRadius").getAsInt():0,f.has("count")?f.get("count").getAsInt():1,f.has("mode")&&f.get("mode").getAsString().equals("exclude"),f.has("id")?f.get("id").getAsString():null,f.has("near")?f.get("near").getAsString():null,filterValues(f,"variants"),filterValues(f,"placements"),filterValues(f,"templates")));}
         // Reject rare structures before scanning thousands of biome points.
         result.sort(Comparator.comparingInt((Feature f)->f.kind.equals("biome")?1:0).thenComparingInt(Feature::radius));
         return result;
@@ -412,6 +417,11 @@ public final class SeedEngine {
         result.put("portalSize",template.startsWith("ruined_portal/giant_portal_")?"huge":"regular");
         result.put("placement",tag.read("VerticalPlacement",RuinedPortalPiece.VerticalPlacement.CODEC).orElseThrow().getSerializedName());
     }
+    static String shipwreckTemplate(Start hit) {
+        for(var piece:hit.start.getPieces())if(piece instanceof ShipwreckPieces.ShipwreckPiece)
+            return Identifier.parse(piece.createTag(pieceContext).getStringOr("Template","")).getPath();
+        throw new IllegalStateException("Shipwreck start has no shipwreck piece");
+    }
     // Every chunk the placement could use in the chunk rectangle, produced lazily; ring positions ignore the rectangle.
     static Stream<ChunkPos> candidates(StructurePlacement placement,long seed,ChunkGeneratorStructureState structState,int minX,int maxX,int minZ,int maxZ) {
         if(placement instanceof ConcentricRingsStructurePlacement rings)return structState.getRingPositionsFor(rings).stream();
@@ -490,6 +500,10 @@ public final class SeedEngine {
             var hit=startAt(set,seed,state,structState,climate,c,confirm&&companions==null);
             // Subcategories are alternatives within a family. Both filters apply to this same start.
             if(hit==null||!f.variants.isEmpty()&&!f.variants.contains(hit.detail()))continue;
+            if(!f.templates.isEmpty()) {
+                if(hit.start==null)hit=startAt(set,seed,state,structState,climate,c,true);
+                if(hit==null||!f.templates.contains(shipwreckTemplate(hit)))continue;
+            }
             if(!f.placements.isEmpty()) {
                 if(hit.start==null)hit=startAt(set,seed,state,structState,climate,c,true);
                 if(hit==null||!f.placements.contains(portalPlacement(hit).getSerializedName()))continue;
@@ -504,6 +518,7 @@ public final class SeedEngine {
             }
             var match=new LinkedHashMap<>(found(f,new BlockPos(pos.getX(),hit.y,pos.getZ()),x,z,hit.detail(),confirm?"Snapshot structure start confirmed":"Snapshot generation point confirmed"));
             if(hit.start!=null&&set==set("ruined_portals"))portalFacts(match,hit);
+            if(hit.start!=null&&set==set("shipwrecks"))match.put("shipwreckTemplate",shipwreckTemplate(hit));
             out.add(match);
             out.addAll(extra);taken++;
         }

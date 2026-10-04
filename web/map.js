@@ -206,7 +206,8 @@ const worldMap = (() => {
   const featureShown = f => layers.structures && f.on && bpp <= f.from;
   const variantShown = (feature, marker) => (feature.key !== 'huge_ruined_portals' || marker.portalSize === 'huge') &&
     (!Array.isArray(feature.variants) || feature.variants.includes(marker.detail)) &&
-    (!Array.isArray(feature.placements) || feature.placements.includes(marker.placement));
+    (!Array.isArray(feature.placements) || feature.placements.includes(marker.placement)) &&
+    (!Array.isArray(feature.templates) || feature.templates.includes(marker.shipwreckTemplate));
   function pumpFeatures() {
     if (!result || !width || !catalog) return;
     // One request per layer and tile: a slow type (ocean monuments, ruined portals) must not hold up the quick ones.
@@ -585,6 +586,7 @@ const worldMap = (() => {
           ${fact('Surface', `${esc(label(p.surfaceBlock || (p.water ? 'water' : 'land')))} · Y ${p.surfaceY}`)}
           ${fact('Ground', `Y ${p.groundY}${p.water ? ' · below water' : ''}`)}
           ${(built?.portalSize || marker?.portalSize) ? fact('Portal size', (built?.portalSize || marker.portalSize) === 'huge' ? 'Huge (giant template)' : 'Regular') : ''}
+          ${(built?.shipwreckTemplate || marker?.shipwreckTemplate) ? fact('Ship template', esc(shipTemplateName(built?.shipwreckTemplate || marker.shipwreckTemplate))) : ''}
           ${(built?.placement || marker?.placement) ? fact('Placement', esc(label(built?.placement || marker.placement))) : ''}
           ${shape ? fact('Structure', `Y ${shape.minY} to ${shape.maxY} <small>${shape.maxX - shape.minX + 1} × ${shape.maxZ - shape.minZ + 1} blocks · ${built.pieces} piece${built.pieces === 1 ? '' : 's'}</small>`) : marker ? fact(marker.kind === 'biome' ? 'Sampled at' : 'Structure Y', `Y ${marker.y}`) : ''}
           ${fact('Nether', `X ${Math.floor(p.x / 8)} · Z ${Math.floor(p.z / 8)}`)}
@@ -732,7 +734,8 @@ const worldMap = (() => {
     Object.assign(layers, fresh); changed(); queueLegend(); emit('layers');
   }
   // The complete current settings, with every structure layer spelled out, for saving as a preset.
-  const snapshot = () => ({ ...structuredClone(layers), features: Object.fromEntries(features().map(f => [f.key, { on: f.on, from: f.from }])) });
+  const snapshot = () => ({ ...structuredClone(layers), features: Object.fromEntries(features().map(f => [f.key, { on: f.on, from: f.from,
+    ...Object.fromEntries(['variants', 'placements', 'templates'].filter(field => Array.isArray(f[field])).map(field => [field, [...f[field]]])) }])) });
 
   return {
     show, clear, on, flyTo, jump, home, fit, focus, pin, zoomBy, setMeasure,

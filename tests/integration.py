@@ -311,6 +311,57 @@ class SnapshotTests(unittest.TestCase):
                          identity(variants=['ruined_portal_swamp','ruined_portal','ruined_portal']))
         self.assertNotEqual(identity(variants=['ruined_portal']),identity(variants=['ruined_portal_swamp']))
 
+    def test_shipwreck_templates(self):
+        catalog=api('/api/status')['catalog'];templates=catalog['structureTemplates']['shipwrecks']
+        expected={'shipwreck/'+shape+suffix for shape in ('with_mast','rightsideup_full','rightsideup_fronthalf','rightsideup_backhalf',
+            'sideways_full','sideways_fronthalf','sideways_backhalf','upsidedown_full','upsidedown_fronthalf','upsidedown_backhalf') for suffix in ('','_degraded')}
+        self.assertEqual(set(templates),expected)
+        markers=api('/api/structures',{'seed':'123','x':0,'z':0,'size':8192,'keys':['shipwrecks']})['features']
+        self.assertEqual({f['shipwreckTemplate'] for f in markers},expected)
+        for template in templates:
+            with self.subTest(template=template):
+                marker=next(f for f in markers if f['shipwreckTemplate']==template)
+                other=next(t for t in templates if t!=template)
+                confirmed=api('/api/structure',{'seed':'123','key':'shipwrecks','x':marker['x'],'z':marker['z']})
+                self.assertTrue(confirmed['valid']);self.assertEqual(confirmed['shipwreckTemplate'],template)
+                def inspect(**filters):
+                    return api('/api/inspect',{'seed':'123','anchor':'custom','x':marker['x'],'z':marker['z'],
+                        'features':[{'kind':'structure','key':'shipwrecks','radius':32,**filters}]})
+                match=inspect(templates=[template],variants=[marker['detail']])
+                self.assertTrue(match['match']);self.assertEqual(match['features'][0]['shipwreckTemplate'],template)
+                self.assertTrue(inspect(templates=[other,template])['match'])
+                self.assertFalse(inspect(templates=[other])['match'])
+                self.assertFalse(inspect(templates=[template],variants=['shipwreck_beached' if marker['detail']=='shipwreck' else 'shipwreck'])['match'])
+                self.assertFalse(inspect(templates=[template],mode='exclude')['match'])
+                self.assertTrue(inspect(templates=[other],mode='exclude')['match'])
+                self.assertFalse(inspect(templates=[template],count=2)['match'])
+        # Filtering whole/half templates leaves the original random selection intact.
+        all_templates=api('/api/inspect',{'seed':'123','anchor':'custom','x':192,'z':7056,
+            'features':[{'kind':'structure','key':'shipwrecks','radius':32,'templates':templates}]})
+        plain=api('/api/inspect',{'seed':'123','anchor':'custom','x':192,'z':7056,
+            'features':[{'kind':'structure','key':'shipwrecks','radius':32}]})
+        self.assertEqual(all_templates,plain)
+        scan={'seed':'123','x':192,'z':7056,'features':[{'kind':'structure','key':'shipwrecks','radius':32,'templates':['shipwreck/with_mast']}]}
+        self.assertEqual(api('/api/scan',scan)['features'][0]['shipwreckTemplate'],'shipwreck/with_mast')
+        scan['features'][0]['templates']=['not_a_template'];self.rejected('/api/scan',scan)
+        api('/api/start',{'seed':'123','threads':1,'limit':1,'maxMatches':10,'anchor':'custom','x':192,'z':7056,
+            'features':[{'kind':'structure','key':'shipwrecks','radius':32,'templates':['shipwreck/with_mast']}]})
+        search=stopped();self.assertEqual(search['matches'],1)
+        self.assertEqual(search['results'][0]['features'][0]['shipwreckTemplate'],'shipwreck/with_mast')
+        for filters in ({'templates':[]},{'templates':'shipwreck/with_mast'},{'templates':['not_a_template']},
+                        {'templates':['shipwreck/with_mast'],'key':'villages'},
+                        {'templates':['shipwreck/with_mast'],'key':'plains','kind':'biome'}):
+            self.rejected('/api/inspect',{'seed':'123','features':[{'kind':'structure','key':'shipwrecks','radius':32,**filters}]})
+        from app import Engine,conditions
+        engine=Engine.__new__(Engine);engine.catalog=catalog
+        def identity(values=None):
+            feature={'kind':'structure','key':'shipwrecks','radius':100}
+            if values is not None:feature['templates']=values
+            return conditions(engine.validate({'seed':'123','features':[feature]}))
+        self.assertEqual(identity(),identity(templates))
+        self.assertNotEqual(identity(['shipwreck/with_mast']),identity(['shipwreck/with_mast_degraded']))
+        self.assertEqual(identity(templates[:2]),identity([templates[1],templates[0],templates[0]]))
+
     def test_structure_subcategories(self):
         catalog=api('/api/status')['catalog']
         expected={'villages':5,'mineshafts':2,'ocean_ruins':2,'shipwrecks':2,'abandoned_camp':18,'ruined_portals':6,'huge_ruined_portals':6}

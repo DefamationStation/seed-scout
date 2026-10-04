@@ -18,7 +18,7 @@ def conditions(request):
     """The part of a search request that decides which seeds match, in a canonical order."""
     keep={k:request[k] for k in ('anchor','biomeMode','cluster')}
     if request['anchor']=='custom': keep.update(x=request['x'],z=request['z'])
-    keep['features']=sorted(({k:f[k] for k in ('kind','key','radius','mode','minRadius','count','id','near','variants','placements') if k in f} for f in request['features']),key=lambda f:json.dumps(f,sort_keys=True))
+    keep['features']=sorted(({k:f[k] for k in ('kind','key','radius','mode','minRadius','count','id','near','variants','placements','templates') if k in f} for f in request['features']),key=lambda f:json.dumps(f,sort_keys=True))
     return keep
 def closeness(result): return sum(f['distance'] for f in result['features'])
 
@@ -225,6 +225,22 @@ class Engine:
             self.process.stdin.write(json.dumps(request)+'\n'); self.process.stdin.flush()
     def next_id(self):
         with self.lock: self.counter+=1; return self.counter
+    def validate_filters(self,f):
+        for field in ('variants','placements','templates'):
+            values=f.get(field)
+            if values is None:
+                f.pop(field,None); continue
+            variants=self.catalog.get('structureVariants',{}).get(f['key'],[]) if f['kind']=='structure' else []
+            allowed=(self.catalog.get('structureTemplates',{}).get(f['key'],[]) if field=='templates' and f['kind']=='structure' else
+                     [self.catalog['variantDetails'][k] for k in variants] if field=='variants' else
+                     [] if field=='templates' else
+                     [p for p in ('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground')
+                      if f['key'] in ('ruined_portals','huge_ruined_portals') and f['key']+'_'+p in self.catalog['sets']])
+            if not isinstance(values,list) or not values or any(not isinstance(v,str) or v not in allowed for v in values):
+                raise ValueError(f'Invalid {field} for this structure family.')
+            values=sorted(set(values))
+            if set(values)==set(allowed): f.pop(field,None)
+            else: f[field]=values
     def validate(self,request):
         if self.catalog is None: raise ValueError('Snapshot engine is still starting.')
         features=request.get('features',[])
@@ -233,19 +249,7 @@ class Engine:
             if f.get('kind') not in ('structure','biome'): raise ValueError('Invalid feature type.')
             choices=self.catalog['sets' if f['kind']=='structure' else 'biomes']
             if f.get('key') not in choices: raise ValueError('Feature is not in this snapshot.')
-            for field in ('variants','placements'):
-                values=f.get(field)
-                if values is None:
-                    f.pop(field,None); continue
-                variants=self.catalog.get('structureVariants',{}).get(f['key'],[]) if f['kind']=='structure' else []
-                allowed=([self.catalog['variantDetails'][k] for k in variants] if field=='variants' else
-                         [p for p in ('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground')
-                          if f['key'] in ('ruined_portals','huge_ruined_portals') and f['key']+'_'+p in self.catalog['sets']])
-                if not isinstance(values,list) or not values or any(not isinstance(v,str) or v not in allowed for v in values):
-                    raise ValueError(f'Invalid {field} for this structure family.')
-                values=sorted(set(values))
-                if set(values)==set(allowed): f.pop(field,None)
-                else: f[field]=values
+            self.validate_filters(f)
             f['radius']=int(f['radius'])
             if not 32<=f['radius']<=8000: raise ValueError('Distances must be 32–8,000 blocks.')
             f['mode']=f.get('mode','within');f['minRadius']=int(f.get('minRadius',0));f['count']=int(f.get('count',1))
@@ -354,6 +358,7 @@ class Engine:
             for f in features:
                 if f.get('kind') not in ('structure','biome'): raise ValueError('Invalid map feature')
                 if f.get('key') not in self.catalog['sets' if f['kind']=='structure' else 'biomes']: raise ValueError('Unknown map feature')
+                self.validate_filters(f)
                 f['radius']=int(f['radius'])
                 if not 32<=f['radius']<=2000: raise ValueError('Map search radius must be 32–2,000 blocks')
             payload['features']=features
