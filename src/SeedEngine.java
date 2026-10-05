@@ -429,7 +429,9 @@ public final class SeedEngine {
         var result=new ArrayList<Feature>();
         for(var item:wanted) {var f=item.getAsJsonObject();result.add(new Feature(f.get("kind").getAsString(),f.get("key").getAsString(),f.get("radius").getAsInt(),f.has("minRadius")?f.get("minRadius").getAsInt():0,f.has("count")?f.get("count").getAsInt():1,f.has("mode")&&f.get("mode").getAsString().equals("exclude"),f.has("id")?f.get("id").getAsString():null,f.has("near")?f.get("near").getAsString():null,filterValues(f,"variants"),filterValues(f,"placements"),filterValues(f,"templates"),alternatives(f)));}
         // Reject rare structures before scanning thousands of biome points.
-        result.sort(Comparator.comparingInt((Feature f)->Decorations.handles(f.key)?2:f.kind.equals("biome")?1:0).thenComparingInt(Feature::radius));
+        // Cheapest first: structures by their generation point, then biomes, then structures whose type is only known
+        // once they are built, then the predicted finds.
+        result.sort(Comparator.comparingInt((Feature f)->Decorations.handles(f.key)?3:f.kind.equals("biome")?1:f.templates.isEmpty()&&f.placements.isEmpty()?0:2).thenComparingInt(Feature::radius));
         return result;
     }
     static Map<String,Object> evaluate(long seed,JsonObject request,JsonArray wanted,Job job) {
@@ -438,9 +440,10 @@ public final class SeedEngine {
         var state=RandomState.create(access.lookupOrThrow(Registries.NOISE),seed,generator.generatorSettings().value());
         var gate=job==null?spawnGate(parsed):job.spawnGate;
         var targets=generator.generatorSettings().value().spawnTarget();
-        var origin=!custom && gate!=null && !targets.isEmpty()
-            ? SpawnSearch.find(state,targets,(cx,cz)->placementGate(gate,seed,cx,cz))
-            : generator.getOrigin(state);
+        // The spawn search is the game's own, with the points that cannot win left unsampled (see SpawnSearch).
+        var origin=targets.isEmpty()?generator.getOrigin(state)
+            : !custom && gate!=null ? SpawnSearch.find(state,targets,(cx,cz)->placementGate(gate,seed,cx,cz))
+            : SpawnSearch.find(state,targets,(cx,cz)->chunk->true);
         if(origin==null)return null;
         int x=request.has("anchor") && request.get("anchor").getAsString().equals("custom")?request.get("x").getAsInt():origin.getMiddleBlockX();
         int z=request.has("anchor") && request.get("anchor").getAsString().equals("custom")?request.get("z").getAsInt():origin.getMiddleBlockZ();
@@ -697,6 +700,17 @@ public final class SeedEngine {
         var candidates=candidates(placement,seed,structState,minX,maxX,minZ,maxZ).filter(c->{double d=distance.applyAsDouble(c);return d>=f.minRadius&&d<=f.radius;})
             .filter(c->{if(box==null)return true;var at=placement.getLocatePos(c);return at.getX()>=box[0]&&at.getZ()>=box[1]&&at.getX()<box[2]&&at.getZ()<box[3];}).sorted(Comparator.comparingDouble(distance)).toList();
         var climate=state.createClimateSampler(SamplerContext.EMPTY_UNCACHED);
+        // A type read from the built structure (abandoned, blacksmith, a ship's template) costs a build for every
+        // candidate. A count that the generation points alone cannot reach is refused before anything is built.
+        if(!f.templates.isEmpty()||!f.placements.isEmpty()) {
+            int needed=Math.min(limit,f.count),possible=0;
+            for(var c:candidates) {
+                if(possible>=needed||job!=null&&!job.running.get())break;
+                var point=startAt(dim,set,seed,state,structState,climate,c,false);
+                if(point!=null&&(f.variants.isEmpty()||f.variants.contains(point.detail())))possible++;
+            }
+            if(possible<needed)return 0;
+        }
         int taken=0;
         for(var c:candidates) {
             if(taken>=limit||job!=null && !job.running.get())return taken;
