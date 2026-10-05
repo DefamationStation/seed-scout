@@ -1,7 +1,7 @@
 {
   "name": "seed-scout",
   "productName": "Seed Scout",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "Find Minecraft seeds by the structures and biomes near spawn, with a terrain map.",
   "author": "DefamationStation",
   "private": true,
