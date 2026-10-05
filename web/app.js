@@ -97,6 +97,7 @@ const STRUCTURES = {
   fortresses: ['Nether fortress', 'castle', 'nether'], bastion_remnants: ['Bastion remnant', 'outpost', 'nether'],
   nether_fossils: ['Nether fossil', 'urn', 'nether'], nether_ruined_portals: ['Ruined portal (Nether)', 'portal', 'nether'],
   end_cities: ['End city', 'city', 'end'],
+  dungeons: ['Dungeon', 'key', 'underground'], amethyst_geodes: ['Amethyst geode', 'gem', 'underground'],
 };
 // The landscape conditions: what each is called, and what a new one asks for.
 const LAND = {
@@ -112,7 +113,8 @@ const isPortalFamily = family => PORTAL_FAMILIES.includes(family);
 const PORTAL_PLACEMENTS = ['on_land_surface', 'partly_buried', 'on_ocean_floor', 'in_mountain', 'underground'];
 const SUBCATEGORY_FILTERS = ['variants', 'placements', 'templates'];
 const SHIP_PLACEMENTS = { afloat: 'Floating at water surface', surface: 'Surface / shallow-water wreck', submerged: 'Deck underwater', beached: 'Beached / on land' };
-const placementName = (family, value) => family === 'shipwrecks' ? SHIP_PLACEMENTS[value] || label(value) : label(value);
+const VILLAGE_PLACEMENTS = { blacksmith: 'With a blacksmith', no_blacksmith: 'No blacksmith' };
+const placementName = (family, value) => (family === 'shipwrecks' ? SHIP_PLACEMENTS[value] : family === 'villages' ? VILLAGE_PLACEMENTS[value] : '') || label(value);
 function shipTemplateName(template) {
   const name = template.split('/').pop(), degraded = name.endsWith('_degraded');
   const shape = name.startsWith('with_mast') ? 'Whole ship with mast' : name.includes('_fronthalf') ? 'Front half' : name.includes('_backhalf') ? 'Back half' : 'Whole ship';
@@ -149,7 +151,7 @@ const chosen = new Map();
 // The dimension a structure is in when it is not the Overworld: 'nether' or 'end'. Its distances and coordinates are
 // that dimension's own: Nether ones from where a portal at the origin leads, End ones from the End's centre.
 const realmOf = f => (f && f.kind === 'structure' && catalog?.dimensions?.[f.key]) || '';
-const REALMS = { nether: 'Nether', end: 'The End' };
+const REALMS = { nether: 'Nether', end: 'The End', predicted: 'Predicted' };
 const realmCommand = (realm, at) => `${realm ? `/execute in minecraft:the_${realm} run tp @s` : '/tp @s'} ${at.x} ${at.y} ${at.z}`;
 let catalog = null, kind = 'structure', state = {}, selectedSeed = null, manualResults = [], resultsSignature = null, toastTimer = 0;
 const fields = ['anchor', 'radius', 'x', 'z', 'threads', 'seed', 'limit', 'maxMatches', 'cluster', 'biomeMode', 'leeway'];
@@ -222,7 +224,7 @@ $('saved-presets').onclick = e => {
   const preset = all[Number(use.dataset.savedPreset)];
   $('preset-menu').open = false; openRow = null;
   chosen.clear();
-  for (const f of preset.chosen) if ((f.kind === 'structure' ? catalog.sets : catalog.biomes).includes(f.key)) chosen.set(`${f.kind}:${f.key}`, condition(f.kind, f.key, f));
+  for (const f of preset.chosen) if ((f.kind === 'structure' ? catalog.sets : catalog.biomes).includes(f.key)) chosen.set(f.id || `${f.kind}:${f.key}`, condition(f.kind, f.key, f));
   for (const [k, v] of Object.entries(preset.fields || {})) if (PRESET_FIELDS.includes(k) && $(k)) $(k).value = v;
   Object.assign(spawnRules, { biomeMode: 'any', biomes: [], slimeCount: 0, slimeRadius: 5 }, preset.spawn || {}); renderSpawnRules();
   restoreLandscape(preset.landscape);
@@ -300,7 +302,8 @@ const isAnchor = id => [...chosen.values()].some(f => f.near === id);
 // Older choosers added one AND condition per checkbox. Preserve the distance/count settings,
 // but combine equivalent conditions into alternatives within one structure family.
 function mergeFamilyConditions(family, force = false) {
-  const keys = familyKeys(family), entries = [...chosen.entries()].filter(([, f]) => f.kind === 'structure' && keys.includes(f.key));
+  // A second condition for the same structure (its id ends in #2, #3…) is deliberate and is left alone.
+  const keys = familyKeys(family), entries = [...chosen.entries()].filter(([id, f]) => f.kind === 'structure' && keys.includes(f.key) && !id.includes('#'));
   if (!entries.length || (entries.length === 1 && entries[0][1].key === family)) return;
   const policy = f => JSON.stringify([f.radius, f.minRadius, f.count, f.mode, f.near || '']);
   if (!force && new Set(entries.map(([, f]) => policy(f))).size > 1) return;
@@ -308,7 +311,7 @@ function mergeFamilyConditions(family, force = false) {
   delete next.id;
   for (const field of SUBCATEGORY_FILTERS) {
     const values = base ? base[field] : field === 'templates' ? [] : entries.map(([, f]) => field === 'variants' ? catalog.variantDetails[f.key] : f.key.startsWith(`${family}_`) && !f.key.includes('__') ? f.key.slice(family.length + 1) : null).filter(Boolean);
-    const all = field === 'variants' ? familyVariants(family).map(k => catalog.variantDetails[k]) : field === 'templates' ? familyTemplates(family) : family === 'shipwrecks' ? catalog?.structurePlacements?.shipwrecks || [] : PORTAL_PLACEMENTS;
+    const all = field === 'variants' ? familyVariants(family).map(k => catalog.variantDetails[k]) : field === 'templates' ? familyTemplates(family) : catalog?.structurePlacements?.[family] || PORTAL_PLACEMENTS;
     if (!values?.length || all.every(v => values.includes(v))) delete next[field];
     else next[field] = [...new Set(values)];
   }
@@ -337,7 +340,7 @@ try {
   if (saved?.spawn) Object.assign(spawnRules, { biomeMode: ['in', 'not'].includes(saved.spawn.biomeMode) ? saved.spawn.biomeMode : 'any', biomes: Array.isArray(saved.spawn.biomes) ? saved.spawn.biomes : [], slimeCount: Number(saved.spawn.slimeCount) || 0, slimeRadius: Number(saved.spawn.slimeRadius) || 5 });
   // The default seed budget rose from 100,000 to 1,000,000; a saved value that is just the old default follows it.
   if (saved && saved.defaults !== 2 && saved.fields.limit === '100000') delete saved.fields.limit;
-  if (saved) { for (const [k, v] of Object.entries(saved.fields)) if ($(k) && k !== 'seed') $(k).value = v; for (const f of saved.chosen) chosen.set(`${f.kind}:${f.key}`, condition(f.kind, f.key, f)); }
+  if (saved) { for (const [k, v] of Object.entries(saved.fields)) if ($(k) && k !== 'seed') $(k).value = v; for (const f of saved.chosen) chosen.set(f.id || `${f.kind}:${f.key}`, condition(f.kind, f.key, f)); }
 } catch { }
 function optionsSummary() {
   const leeway = Number($('leeway').value) || 0, close = leeway ? `${leeway}% leeway` : 'exact';
@@ -471,9 +474,10 @@ function featureTiles(of, filter) {
   if (of === 'spawn') return Object.entries(SPAWN_TILES).filter(([, tile]) => tile[0].toLowerCase().includes(filter)).map(([which, tile]) => { const on = which === 'biome' ? spawnRules.biomeMode !== 'any' : spawnRules.slimeCount > 0;
     return `<button type="button" class="feature land-add ${on ? 'selected' : ''}" data-spawn-add="${which}">${spawnMark(which)}<span class="name">${tile[0]}<small>${tile[1]}</small></span>${icon(on ? 'check' : 'plus', 'tick')}</button>`; }).join('');
   const list = [...(of === 'structure' ? catalog.sets.filter(rootStructure) : catalog.biomes)].filter(k => label(k).toLowerCase().includes(filter) || (of === 'structure' && familyKeys(k).some(v => label(v).toLowerCase().includes(filter)))).sort((a, b) => label(a).localeCompare(label(b)));
-  const realm = k => (of === 'structure' && catalog.dimensions?.[k]) || '', order = ['', 'nether', 'end'];
+  // Dungeons and geodes are not structures: the game places them chunk by chunk, and where is worked out the same way.
+  const realm = k => (of === 'structure' && (catalog.dimensions?.[k] || (catalog.predicted?.includes(k) ? 'predicted' : ''))) || '', order = ['', 'nether', 'end', 'predicted'];
   list.sort((a, b) => order.indexOf(realm(a)) - order.indexOf(realm(b)));
-  const heading = (k, i) => realm(k) && (i === 0 || realm(list[i - 1]) !== realm(k)) ? `<div class="feature-section">${REALMS[realm(k)]}<small>${realm(k) === 'nether' ? 'Nether blocks, from where your portal leads' : 'blocks from the centre of the End'}</small></div>` : '';
+  const heading = (k, i) => realm(k) && (i === 0 || realm(list[i - 1]) !== realm(k)) ? `<div class="feature-section">${REALMS[realm(k)]}<small>${realm(k) === 'nether' ? 'Nether blocks, from where your portal leads' : realm(k) === 'end' ? 'blocks from the centre of the End' : 'slow to search, and right most of the time'}</small></div>` : '';
   return list.map((k, i) => heading(k, i) + (() => {
     if (of === 'structure' && STRUCTURE_FAMILIES.includes(k)) {
       const count = familyKeys(k).filter(v => chosen.has(`structure:${v}`)).length;
@@ -518,9 +522,10 @@ function renderChosen() {
     const others = avoid || f.near || isAnchor(id) ? null : (f.or || []);
     const pick = (kind, keys) => keys.filter(k => !(kind === f.kind && k === f.key) && !others.some(o => o.kind === kind && o.key === k)).sort((a, b) => label(a).localeCompare(label(b))).map(k => `<option value="${kind}:${esc(k)}">${esc(label(k))}</option>`).join('');
     const either = !others ? '' : `<div class="criterion-or">${others.map((o, i) => `<span>or</span><span class="chip">${glyph(o.kind, o.key)}${esc(label(o.key))}<button data-or-remove="${i}" data-id="${esc(id)}" aria-label="Remove alternative ${esc(label(o.key))}">×</button></span>`).join('')}${others.length < 4 && catalog ? `<select data-or-add data-id="${esc(id)}" aria-label="Add an alternative to ${name}"><option value="">+ or…</option><optgroup label="Structures">${pick('structure', catalog.sets.filter(rootStructure))}</optgroup><optgroup label="Biomes">${pick('biome', catalog.biomes)}</optgroup></select>` : ''}</div>`;
-    const types = f.kind === 'structure' && STRUCTURE_FAMILIES.includes(f.key) ? `<button type="button" class="link" data-subcategories="${esc(f.key)}">Narrow by type…</button>` : '';
+    const types = f.kind === 'structure' && STRUCTURE_FAMILIES.includes(f.key) ? `<button type="button" class="link" data-subcategories="${esc(f.key)}" data-id="${esc(id)}">Narrow by type…</button>` : '';
+    const another = `<button type="button" class="link another" data-duplicate="${esc(id)}" title="A second, separate condition for the same thing: for example three villages within 800 blocks, and an abandoned one by the sea">+ Another ${esc(label(f.key).toLowerCase())} condition</button>`;
     const body = `<div class="criterion-rule"><span class="mini-seg" role="group" aria-label="Condition for ${name}"><button type="button" data-mode="within" data-id="${esc(id)}" class="${avoid ? '' : 'active'}">Near</button><button type="button" data-mode="exclude" data-id="${esc(id)}" class="${avoid ? 'active' : ''}">Avoid</button></span>${types}</div>
-      <div class="criterion-rule">${rule}</div>${either}`;
+      <div class="criterion-rule">${rule}</div>${either}<div class="criterion-rule">${another}</div>`;
     return conditionRow(id, avoid ? 'avoid' : '', glyph(f.kind, f.key), name, esc(ruleSummary(f)), body, `data-remove="${esc(id)}"`);
   }).join('') + landRows() || '<p class="hint empty-list">Nothing yet. Add what you want the seed to have.</p>';
   syncButtons();
@@ -651,6 +656,7 @@ function subcategoryGroups(family, mode) {
   // A family with one variant (igloos) has nothing to choose there.
   const groups = variants.length > 1 ? [{ title: isPortalFamily(family) || family === 'abandoned_camp' ? 'Biome' : family === 'villages' ? 'Style' : 'Type', field: 'variants', options: variants }] : [];
   if (isPortalFamily(family)) groups.push({ title: 'Placement', field: 'placements', options: PORTAL_PLACEMENTS.filter(p => catalog?.sets.includes(`${family}_${p}`)).map(p => ({ value: p, name: label(p) })) });
+  if (family === 'villages' && mode === 'find') groups.push({ title: 'Blacksmith', field: 'placements', options: (catalog?.structurePlacements?.villages || []).map(p => ({ value: p, name: placementName(family, p) })) });
   if (family === 'shipwrecks' && mode === 'find') groups.push({ title: 'In the water', note: 'predicted', field: 'placements', options: (catalog?.structurePlacements?.shipwrecks || []).map(p => ({ value: p, name: placementName(family, p) })) });
   // Map markers are only built for shipwrecks, so the other families' traits can filter a search but not a layer.
   const templates = mode === 'find' || family === 'shipwrecks' ? familyTemplates(family) : [];
@@ -659,10 +665,10 @@ function subcategoryGroups(family, mode) {
       : templates.map(t => ({ value: t, ...shipParts(t) })).sort((a, b) => a.order - b.order || SHIP_SHAPES.indexOf(a.shape) - SHIP_SHAPES.indexOf(b.shape)).map(p => ({ value: p.value, name: p.shape, row: p.row, title: shipTemplateName(p.value) })) });
   return groups;
 }
-const subcategoryConfig = () => subcategoryContext.mode === 'find' ? chosen.get(`structure:${subcategoryContext.family}`) : worldMap.features().find(f => f.key === subcategoryContext.family);
-function openSubcategories(family, mode) {
+const subcategoryConfig = () => subcategoryContext.mode === 'find' ? chosen.get(subcategoryContext.id) : worldMap.features().find(f => f.key === subcategoryContext.family);
+function openSubcategories(family, mode, id = `structure:${family}`) {
   if (mode === 'find') { commitConditionFields(); mergeFamilyConditions(family, true); renderFeatures(); renderChosen(); save(); }
-  subcategoryContext = { family, mode };
+  subcategoryContext = { family, mode, id };
   $('subcategory-title').textContent = familyName(family);
   $('subcategory-hint').textContent = family === 'shipwrecks' && mode === 'find' ? 'The water placement is predicted from base terrain; ice and finished-world details can differ. Floating and beached ships are rare and need wider searches.'
     : isPortalFamily(family) ? 'Placement names are the game’s own: swamp portals count as “On ocean floor” even on dry land.' : '';
@@ -688,7 +694,7 @@ function renderSubcategories() {
 function setSubcategoryFilters(change) {
   const { family, mode } = subcategoryContext;
   if (mode === 'find') {
-    const id = `structure:${family}`, current = chosen.get(id);
+    const id = subcategoryContext.id, current = chosen.get(id);
     if (!current && chosen.size >= 12) return toast('Choose up to 12 search conditions.', true);
     const next = { ...(current || condition('structure', family)) };
     for (const [field, values] of Object.entries(change)) if (values) next[field] = values; else delete next[field];
@@ -711,7 +717,7 @@ $('subcategory-options').onclick = e => {
   $('subcategory-options').querySelector(`[data-subfield="${field}"][data-subvalue="${CSS.escape(value)}"]`)?.focus({ preventScroll: true });
 };
 $('subcategory-reset').onclick = () => { setSubcategoryFilters({ variants: null, placements: null, templates: null }); renderSubcategories(); };
-$('subcategory-remove').onclick = () => { chosen.delete(`structure:${subcategoryContext.family}`); renderFeatures(); renderChosen(); save(); renderSubcategories(); };
+$('subcategory-remove').onclick = () => { chosen.delete(subcategoryContext.id); renderFeatures(); renderChosen(); save(); renderSubcategories(); };
 for (const id of ['subcategory-close', 'subcategory-done']) $(id).onclick = () => $('subcategory-dialog').close();
 $('subcategory-dialog').onclick = e => { if (e.target === e.currentTarget) { const box = e.currentTarget.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) e.currentTarget.close(); } };
 $('chosen').onchange = e => {
@@ -731,7 +737,16 @@ $('chosen').onclick = e => {
   const head = e.target.closest('[data-open-row]');
   if (head) { commitConditionFields(); openRow = openRow === head.dataset.openRow ? null : head.dataset.openRow; renderChosen(); save(); return; }
   const types = e.target.closest('[data-subcategories]');
-  if (types) return openSubcategories(types.dataset.subcategories, 'find');
+  if (types) return openSubcategories(types.dataset.subcategories, 'find', types.dataset.id);
+  const again = e.target.closest('[data-duplicate]');
+  if (again) {
+    const from = chosen.get(again.dataset.duplicate); if (!from) return;
+    if (chosen.size >= 12) return toast('Choose up to 12 search conditions.', true);
+    commitConditionFields();
+    let n = 2; while (chosen.has(`${from.kind}:${from.key}#${n}`)) n++;
+    const id = `${from.kind}:${from.key}#${n}`;
+    chosen.set(id, { ...condition(from.kind, from.key), id }); openRow = id; renderChosen(); save(); return;
+  }
   if (landscapeClicked(e) || spawnClicked(e)) return;
   const alternative = e.target.closest('[data-or-remove]');
   if (alternative) { const f = chosen.get(alternative.dataset.id); f.or.splice(Number(alternative.dataset.orRemove), 1); if (!f.or.length) delete f.or; renderChosen(); save(); return; }
@@ -883,8 +898,8 @@ $('inspect').onclick = async () => {
 // ---- Results -------------------------------------------------------------
 // Chip text for a matched feature: distance from the origin, or from the match it was measured from.
 // What a built structure turned out to be, beyond its type: read from its pieces by the engine.
-const builtFact = f => f.bastion ? `${TRAITS[f.bastion] || 'Unknown'} bastion` : f.ship ? 'With ship' : f.zombie ? 'Abandoned (zombie)' : f.basement === true ? 'With basement' : f.basement === false ? 'No basement' : f.ruins > 1 ? `Cluster of ${f.ruins}` : f.ruins === 1 ? 'Single ruin' : '';
-const featureChip = f => f.kind === 'terrain' ? `${glyph('terrain', f.key)}${esc(LAND[f.key]?.name || f.key)}<b>${esc(landFact(f))}</b>${f.from ? `at the ${esc(label(f.from).toLowerCase())}` : ''}` : `${glyph(f.kind, f.key)}${esc(label(f.key))}${f.zombie || f.basement || f.ruins > 1 || f.bastion || f.ship ? `<i>${esc(builtFact(f).toLowerCase())}</i>` : ''}<b>${fmt(f.distance)}</b>${f.near ? `from ${esc(label(f.near.key).toLowerCase())}` : f.dimension === 'nether' ? 'Nether blocks' : f.dimension === 'end' ? 'from the End’s centre' : 'blocks'}`;
+const builtFact = f => f.bastion ? `${TRAITS[f.bastion] || 'Unknown'} bastion` : f.ship ? 'With ship' : f.zombie || f.blacksmith ? [f.zombie && 'Abandoned (zombie)', f.blacksmith && 'Blacksmith'].filter(Boolean).join(' · ') : f.basement === true ? 'With basement' : f.basement === false ? 'No basement' : f.ruins > 1 ? `Cluster of ${f.ruins}` : f.ruins === 1 ? 'Single ruin' : '';
+const featureChip = f => f.kind === 'terrain' ? `${glyph('terrain', f.key)}${esc(LAND[f.key]?.name || f.key)}<b>${esc(landFact(f))}</b>${f.from ? `at the ${esc(label(f.from).toLowerCase())}` : ''}` : `${glyph(f.kind, f.key)}${esc(label(f.key))}${f.zombie || f.blacksmith || f.basement || f.ruins > 1 || f.bastion || f.ship ? `<i>${esc(builtFact(f).toLowerCase())}</i>` : ''}<b>${fmt(f.distance)}</b>${f.near ? `from ${esc(label(f.near.key).toLowerCase())}` : f.dimension === 'nether' ? 'Nether blocks' : f.dimension === 'end' ? 'from the End’s centre' : 'blocks'}`;
 // The End is not on the map: its chip gives the place as a teleport command instead.
 async function copyEndPlace(seed, f) {
   try {
@@ -1322,7 +1337,7 @@ async function poll() {
     showUsage();
     if (!$('version').options.length) loadVersions();
     $('settings-minecraft').textContent = `Using ${versionName(catalog.version)}. Change the version with the list at the top right.`;
-    $('nearest-feature').innerHTML = [['structure', catalog.sets.filter(k => !catalog.dimensions?.[k])], ['biome', catalog.biomes]].map(([k, keys]) => `<optgroup label="${k === 'structure' ? 'Structures' : 'Biomes'}">${[...keys].sort((a, b) => label(a).localeCompare(label(b))).map(key => `<option value="${k}:${esc(key)}">${esc(label(key))}</option>`).join('')}</optgroup>`).join('');
+    $('nearest-feature').innerHTML = [['structure', catalog.sets.filter(k => !catalog.dimensions?.[k] && !catalog.predicted?.includes(k))], ['biome', catalog.biomes]].map(([k, keys]) => `<optgroup label="${k === 'structure' ? 'Structures' : 'Biomes'}">${[...keys].sort((a, b) => label(a).localeCompare(label(b))).map(key => `<option value="${k}:${esc(key)}">${esc(label(key))}</option>`).join('')}</optgroup>`).join('');
     // The structure layers are now known, so the map can start filling them in.
     worldMap.refresh(); renderLayers();
     renderFeatures(); renderChosen();

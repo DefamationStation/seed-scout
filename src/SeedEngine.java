@@ -152,8 +152,9 @@ public final class SeedEngine {
         structureTemplates.put("end_cities",List.of("ship","no_ship"));
         generator.getBiomeSource().possibleBiomes().forEach(h->h.unwrapKey().ifPresent(k->biomeNames.put(k.identifier().getPath(),k.identifier().toString())));
         var ready=new LinkedHashMap<String,Object>(Map.of("type","ready","version",SharedConstants.getCurrentVersion().id(),"sets",sets.keySet(),"biomes",biomeNames.keySet(),"cores",CORES,"mapWorkers",MAP_THREADS,"structureVariants",structureVariants,"variantDetails",variantDetails,"structureTemplates",structureTemplates));
-        ready.put("structurePlacements",Map.of("shipwrecks",ShipwreckPlacement.OPTIONS));
-        var named=new TreeMap<String,String>();dimensions.forEach((key,dim)->named.put(key,dim.name));ready.put("dimensions",named);emit(ready);
+        ready.put("structurePlacements",Map.of("shipwrecks",ShipwreckPlacement.OPTIONS,"villages",List.of("blacksmith","no_blacksmith")));
+        var named=new TreeMap<String,String>();dimensions.forEach((key,dim)->named.put(key,dim.name));ready.put("dimensions",named);
+        var keys=new TreeSet<>(sets.keySet());keys.addAll(Decorations.KEYS.keySet());ready.put("sets",keys);ready.put("predicted",new TreeSet<>(Decorations.KEYS.keySet()));emit(ready);
     }
     public static void main(String[] args) throws Exception {
         initialize();
@@ -428,7 +429,7 @@ public final class SeedEngine {
         var result=new ArrayList<Feature>();
         for(var item:wanted) {var f=item.getAsJsonObject();result.add(new Feature(f.get("kind").getAsString(),f.get("key").getAsString(),f.get("radius").getAsInt(),f.has("minRadius")?f.get("minRadius").getAsInt():0,f.has("count")?f.get("count").getAsInt():1,f.has("mode")&&f.get("mode").getAsString().equals("exclude"),f.has("id")?f.get("id").getAsString():null,f.has("near")?f.get("near").getAsString():null,filterValues(f,"variants"),filterValues(f,"placements"),filterValues(f,"templates"),alternatives(f)));}
         // Reject rare structures before scanning thousands of biome points.
-        result.sort(Comparator.comparingInt((Feature f)->f.kind.equals("biome")?1:0).thenComparingInt(Feature::radius));
+        result.sort(Comparator.comparingInt((Feature f)->Decorations.handles(f.key)?2:f.kind.equals("biome")?1:0).thenComparingInt(Feature::radius));
         return result;
     }
     static Map<String,Object> evaluate(long seed,JsonObject request,JsonArray wanted,Job job) {
@@ -523,7 +524,7 @@ public final class SeedEngine {
     // Gate on one necessary positive root condition. Never prune on exclusions,
     // dependent conditions, biome samples, or unsupported placement types.
     static Feature spawnGate(List<Feature> features) {
-        return features.stream().filter(f->f.kind.equals("structure") && dimOf(f)==OVERWORLD && !f.exclude && f.near==null && f.or.isEmpty() && f.radius<=256)
+        return features.stream().filter(f->f.kind.equals("structure") && !Decorations.handles(f.key) && dimOf(f)==OVERWORLD && !f.exclude && f.near==null && f.or.isEmpty() && f.radius<=256)
             .filter(f->set(f.key).placement() instanceof RandomSpreadStructurePlacement p && p.spacing()>=32)
             .min(Comparator.comparingDouble(f->(double)f.radius/((RandomSpreadStructurePlacement)set(f.key).placement()).spacing())).orElse(null);
     }
@@ -566,6 +567,11 @@ public final class SeedEngine {
     // What only a built start can tell about a structure, beyond its type:
     // a village's town centre comes from the zombie pools in an abandoned village; an igloo with a basement has the
     // ladder and laboratory as extra pieces; an ocean ruin that is a cluster has its smaller ruins as extra ones.
+    // The house players call the blacksmith is the weaponsmith: the forge with the loot chest. Not every village has one.
+    static boolean blacksmith(Start hit) {
+        for(var piece:hit.start.getPieces())if(piece instanceof PoolElementStructurePiece house&&house.getElement().toString().contains("weaponsmith"))return true;
+        return false;
+    }
     static boolean zombieVillage(Start hit) { return hit.start.getPieces().get(0) instanceof PoolElementStructurePiece centre&&centre.getElement().toString().contains("/zombie/"); }
     static int ruinCount(Start hit) { return hit.start.getPieces().size()/(hit.detail().endsWith("cold")?3:1); }
     // The value a condition's "templates" filter is matched against, for the families listed in structureTemplates.
@@ -589,7 +595,7 @@ public final class SeedEngine {
     static void builtFacts(Map<String,Object> result,Start hit,StructureSet set) {
         if(hit.start==null)return;
         var pieces=hit.start.getPieces();
-        if(set==set("villages"))result.put("zombie",zombieVillage(hit));
+        if(set==set("villages")){result.put("zombie",zombieVillage(hit));result.put("blacksmith",blacksmith(hit));}
         else if(set==set("igloos"))result.put("basement",pieces.size()>1);
         // A cold ruin is three overlaid pieces (stone brick, cracked, mossy); a warm one is a single piece.
         else if(set==set("ocean_ruins"))result.put("ruins",ruinCount(hit));
@@ -663,7 +669,7 @@ public final class SeedEngine {
             for(var d:deps) {
                 var matches=new ArrayList<Map<String,Object>>();
                 // A condition on the parent's own type must not count the parent itself.
-                boolean same=d.kind.equals("structure")&&set(d.key)==set(parent.key);
+                boolean same=d.kind.equals("structure")&&(Decorations.handles(d.key)||Decorations.handles(parent.key)?d.key.equals(parent.key):set(d.key)==set(parent.key));
                 var at=frame(dimOf(parent),dimOf(d),pos.getX(),pos.getZ());
                 if(d.kind.equals("structure"))findStructures(d,seed,state,structState,at[0],at[1],job,matches,d.count+(same?1:0),confirm&&!d.exclude,null);
                 else {var b=findBiome(d,seed,state,at[0],at[1],job,biomeMode);if(b!=null)matches.add(b);}
@@ -679,6 +685,8 @@ public final class SeedEngine {
     // {left, top, right, bottom} in blocks (right and bottom exclusive): when set, only structures located inside count.
     static final ThreadLocal<int[]> ONLY_INSIDE=new ThreadLocal<>();
     static int findStructures(Feature f,long seed,RandomState state,ChunkGeneratorStructureState structState,int x,int z,Job job,List<Map<String,Object>> out,int limit,boolean confirm,BiFunction<BlockPos,Boolean,List<Map<String,Object>>> companions) {
+        // Dungeons and geodes are not structures; the game places them while decorating a chunk, so that is predicted.
+        if(Decorations.handles(f.key))return Decorations.find(f,seed,state,x,z,()->job==null||job.running.get(),out,limit,confirm,companions);
         var set=set(f.key); var placement=set.placement();
         // x and z are in the structure's own dimension; so are the positions reported.
         var dim=dimOf(f.key);
@@ -705,6 +713,7 @@ public final class SeedEngine {
                 if(hit==null)continue;
                 String placementName;
                 if(set==set("shipwrecks")){shipPlacement=ShipwreckPlacement.facts(hit,state);placementName=(String)shipPlacement.get("placement");}
+                else if(set==set("villages"))placementName=blacksmith(hit)?"blacksmith":"no_blacksmith";
                 else placementName=portalPlacement(hit).getSerializedName();
                 if(!f.placements.contains(placementName))continue;
             }
@@ -800,6 +809,7 @@ public final class SeedEngine {
             request=r;id=r.get("id").getAsLong();seed=Long.parseLong(r.get("seed").getAsString());threads=r.get("threads").getAsInt();maxMatches=r.get("maxMatches").getAsInt();range=r.get("range").getAsInt();
             var parsed=parseFeatures(r.getAsJsonArray("features"));
             if(parsed.stream().anyMatch(f->dimOf(f)!=OVERWORLD||f.or.stream().anyMatch(o->dimOf(o)!=OVERWORLD)))throw new IllegalArgumentException("Searching inside one seed covers the Overworld only. Nether and End structures can be used when searching many seeds.");
+            if(parsed.stream().anyMatch(f->Decorations.handles(f.key)||f.or.stream().anyMatch(o->Decorations.handles(o.key))))throw new IllegalArgumentException("Dungeons and geodes are predicted chunk by chunk, which is too slow for a whole world. They can be used when searching many seeds.");
             // The anchor is the condition with the fewest candidates: ring structures (128 strongholds in a world), then the widest spacing.
             var roots=parsed.stream().filter(f->!f.exclude&&f.near==null&&f.or.isEmpty()).toList();
             ToDoubleFunction<Feature> rarity=f->set(f.key).placement() instanceof RandomSpreadStructurePlacement spread?spread.spacing():set(f.key).placement() instanceof ConcentricRingsStructurePlacement?1e9:1;

@@ -220,6 +220,8 @@ select option, select optgroup { background: var(--surface-2); color: var(--text
 .criterion-body { padding: 0 10px 10px; }
 .criterion-body .criterion-rule:first-child { margin-top: 0; }
 .criterion-body .link { margin-left: auto; font-size: 12px; }
+.criterion-body .link.another { margin-left: 0; color: var(--muted); }
+.criterion-body .link.another:hover { color: var(--accent-strong); }
 #find-body:not(.world-mode) .world-only { display: none; }
 #find-body.world-mode .seeds-only { display: none; }
 .world-results { padding: 0 16px 12px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }

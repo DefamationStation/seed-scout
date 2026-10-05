@@ -197,7 +197,7 @@ const worldMap = (() => {
   const defaultFeature = key => ({ on: true, from: (FEATURE_DEFAULTS.find(d => d[0] === key) || [key, 8])[1] });
   function features() {
     if (featureCache) return featureCache;
-    const ranked = FEATURE_DEFAULTS.map(d => d[0]), known = catalog ? catalog.sets.filter(k => !k.includes('__') && !/^(huge_)?ruined_portals_/.test(k) && !catalog.dimensions?.[k]) : ranked;
+    const ranked = FEATURE_DEFAULTS.map(d => d[0]), known = catalog ? catalog.sets.filter(k => !k.includes('__') && !/^(huge_)?ruined_portals_/.test(k) && !catalog.dimensions?.[k] && !catalog.predicted?.includes(k)) : ranked;
     const order = [...ranked.filter(k => known.includes(k)), ...known.filter(k => !ranked.includes(k)).sort()];
     const list = order.map((key, rank) => ({ key, rank, ...defaultFeature(key), ...layers.features[key] }));
     if (catalog) featureCache = list;

@@ -268,6 +268,8 @@ class Engine:
             wanted=self.validate(copy.deepcopy(request));places=[];ring=0;base=dict(baseSeconds=0,baseRegions=0,covered=0)
             if any(c['kind']=='structure' and c['key'] in self.catalog.get('dimensions',{}) for f in wanted['features'] for c in [f,*f.get('or',[])]):
                 raise ValueError('Searching inside one seed covers the Overworld only. Nether and End structures can be used when searching many seeds.')
+            if any(c['kind']=='structure' and c['key'] in self.catalog.get('predicted',[]) for f in wanted['features'] for c in [f,*f.get('or',[])]):
+                raise ValueError('Dungeons and geodes are predicted chunk by chunk, which is too slow for a whole world. They can be used when searching many seeds.')
             # Spawn conditions describe a seed, not a place in it.
             for key in ('spawnBiomes','spawnBiomeMode','slime','resume'): wanted.pop(key,None)
             if not any(f['mode']=='within' and not f.get('near') and not f.get('or') for f in wanted['features']):
@@ -364,7 +366,7 @@ class Engine:
             allowed=(self.catalog.get('structureTemplates',{}).get(f['key'],[]) if field=='templates' and f['kind']=='structure' else
                      [self.catalog['variantDetails'][k] for k in variants] if field=='variants' else
                      [] if field=='templates' else
-                     self.catalog.get('structurePlacements',{}).get('shipwrecks',[]) if f['kind']=='structure' and f['key']=='shipwrecks' else
+                     self.catalog.get('structurePlacements',{})[f['key']] if f['kind']=='structure' and f['key'] in self.catalog.get('structurePlacements',{}) else
                      [p for p in ('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground')
                       if f['key'] in ('ruined_portals','huge_ruined_portals') and f['key']+'_'+p in self.catalog['sets']])
             if not isinstance(values,list) or not values or any(not isinstance(v,str) or v not in allowed for v in values):
