@@ -240,9 +240,11 @@ class Engine:
             with self.lock:
                 if self.state.get('id')!=request['id']: return
                 self.state.update(results=sorted(found,key=rank),matches=len(found),catalogueMatches=len(found),catalogueChecked=len(known),phase='search')
-                if self.stopping or len(found)>=request['maxMatches']:
+                if self.stopping:
                     self.state.update(running=False,nextSeed=request['seed']);self.save_results();return
-                self.send({**request,'maxMatches':request['maxMatches']-len(found)})
+                # Seeds from the catalogue come on top of the results asked for. When they counted towards that number,
+                # a catalogue with enough matches ended every search at once, with the same seeds and none tried.
+                self.send(request)
         except (ValueError,OSError,sqlite3.Error) as error:
             with self.lock: self.state.update(running=False,error=str(error))
     def stop(self):
