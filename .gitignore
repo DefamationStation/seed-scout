@@ -13,3 +13,5 @@ desktop/dist/
 desktop/vendor/
 settings.json
 settings.tmp
+page-state.json
+page-state.tmp

@@ -647,6 +647,18 @@ def switch_version(server,request):
         write_settings({'version':version})
         return {'version':version}
 
+PAGE_STATE=DATA/'page-state.json'
+def page_state():
+    """What the page remembers between starts: its conditions, presets, layers and last view."""
+    try: state=json.loads(PAGE_STATE.read_text(encoding='utf-8'))
+    except (OSError,ValueError): return {}
+    return state if isinstance(state,dict) else {}
+def keep_page_state(request):
+    state=request.get('state')
+    if not isinstance(state,dict) or len(state)>40 or any(not isinstance(k,str) or not k.startswith('seed-scout-') or not isinstance(v,str) for k,v in state.items()): raise ValueError('Invalid page state.')
+    temp=PAGE_STATE.with_suffix('.tmp');temp.write_text(json.dumps(state),encoding='utf-8');os.replace(temp,PAGE_STATE)
+    return {'ok':True}
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
     def reply(self,obj,status=200,cache='no-store'):
@@ -698,6 +710,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=='/api/status':
             with self.server.engine.lock: data=copy.deepcopy(self.server.engine.state);data.update(ready=self.server.engine.catalog is not None,catalog=self.server.engine.catalog,world={k:v for k,v in self.server.engine.world.items() if k!='id'})
             return self.reply(data)
+        if self.path=='/api/page-state': return self.reply({'state':page_state()})
         if self.path=='/api/versions': return self.reply({'current':self.server.engine.version,'versions':installed_versions()})
         if self.path=='/api/saved': return self.reply({'seeds':self.server.engine.saved()})
         if self.path=='/api/catalogue': return self.reply({'finds':self.server.engine.catalogue.listing()})
@@ -737,6 +750,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path=='/api/structure': result=self.server.engine.structure(request)
             elif self.path=='/api/saved': result=self.server.engine.save_seed(request)
             elif self.path=='/api/saved-delete': result=self.server.engine.forget_seed(request)
+            elif self.path=='/api/page-state': result=keep_page_state(request)
             elif self.path=='/api/config': result=self.server.engine.configure(request)
             elif self.path=='/api/estimate': result=self.server.engine.estimate(request)
             elif self.path=='/api/version': result=switch_version(self.server,request)
