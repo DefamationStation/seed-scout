@@ -493,7 +493,7 @@ class Engine:
         if not 1<=request['maxMatches']<=100: raise ValueError('Result limit must be 1–100.')
         request['rareThreshold']=int(request.get('rareThreshold',100000))
         if not 100<=request['rareThreshold']<=100000000: raise ValueError('The rare-find threshold must be 100–100,000,000 seeds per match.')
-        request['useCatalogue']=bool(request.get('useCatalogue',True))
+        request['useCatalogue']=bool(request.get('useCatalogue',False))
         with self.lock:
             if self.state['running'] or self.busy or self.world.get('running'): raise ValueError('Stop the current search before starting another.')
             request.update(cmd='start',id=self.next_id());self.stopping=False

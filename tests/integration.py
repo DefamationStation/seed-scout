@@ -136,15 +136,18 @@ class SnapshotTests(unittest.TestCase):
             first=run(seed="9000000",limit=6000,features=rare,useCatalogue=False)
             self.assertEqual((first["tested"],first["matches"]),(6000,22))
             self.assertEqual([(f["tested"],f["matches"],f["seedsPerMatch"],len(f["seeds"]),f["imported"]) for f in mine()],[(6000,22,273,22,False)])
-            # The same conditions from another starting seed: every catalogued seed comes back before any new seed is tried.
-            again=run(seed="9500000",limit=1000,features=rare)
+            # The same conditions from another starting seed, with the catalogue asked for: every catalogued seed comes back before any new seed is tried.
+            again=run(seed="9500000",limit=1000,features=rare,useCatalogue=True)
             reused={r["seed"] for r in again["results"] if r.get("fromCatalogue")}
             self.assertTrue({r["seed"] for r in first["results"]}<=reused);self.assertGreaterEqual(again["catalogueChecked"],22)
             self.assertEqual({r["seed"] for r in again["results"] if not r.get("fromCatalogue")},{"9500561","9500902"})
             self.assertEqual([(f["tested"],f["matches"],f["seedsPerMatch"],len(f["seeds"])) for f in mine()],[(7000,24,292,24)])
-            # A looser search is answered from the catalogue without trying a single new seed.
-            looser=run(seed="9700000",limit=50,maxMatches=3,features=[{"kind":"structure","key":"woodland_mansions","radius":2000}],rareThreshold=100000)
-            self.assertEqual((looser["tested"],looser["matches"]),(0,3));self.assertTrue(all(r["fromCatalogue"] for r in looser["results"]))
+            # A looser search lists the catalogue seeds that fit, on top of the results asked for: new seeds are still tried.
+            looser=run(seed="9700000",limit=50,maxMatches=3,features=[{"kind":"structure","key":"woodland_mansions","radius":2000}],rareThreshold=100000,useCatalogue=True)
+            self.assertEqual(sum(1 for r in looser["results"] if r.get("fromCatalogue")),3);self.assertGreater(looser["tested"],0)
+            # Left to its default, a search returns new seeds only.
+            plain=run(seed="9700000",limit=50,maxMatches=3,features=[{"kind":"structure","key":"woodland_mansions","radius":2000}],rareThreshold=100000)
+            self.assertFalse(any(r.get("fromCatalogue") for r in plain["results"]));self.assertEqual(plain["catalogueChecked"],0)
             # A common combination is not kept, and with the catalogue switched off none of its seeds are used.
             common=run(seed="9800000",limit=40,maxMatches=5,features=[{"kind":"structure","key":"villages","radius":1000}],useCatalogue=False)
             self.assertFalse(any(r.get("fromCatalogue") for r in common["results"]));self.assertEqual(len(mine()),1)

@@ -1088,8 +1088,9 @@ worldMap.on('close', renderSaved);
 // ---- Rare finds ----------------------------------------------------------
 // Searches that needed many seeds per match are kept by the app (catalogue.db) with their conditions and seeds.
 let rareFinds = [];
-try { $('rare-threshold').value = localStorage.getItem('seed-scout-rare') || 100000; $('rare-first').checked = localStorage.getItem('seed-scout-rare-first') !== 'off'; } catch { }
-$('rare-first').onchange = e => localStorage.setItem('seed-scout-rare-first', e.target.checked ? 'on' : 'off');
+try { $('rare-threshold').value = localStorage.getItem('seed-scout-rare') || 100000; $('rare-first').checked = localStorage.getItem('seed-scout-catalogue-first') === 'on'; } catch { }
+// Off unless asked for: a search is for new seeds, and the ones already found are in the catalogue to open.
+$('rare-first').onchange = e => localStorage.setItem('seed-scout-catalogue-first', e.target.checked ? 'on' : 'off');
 $('rare-threshold').onchange = e => { e.target.value = Math.max(100, Math.min(100000000, Math.round(Number(e.target.value) || 100000))); localStorage.setItem('seed-scout-rare', e.target.value); };
 document.querySelectorAll('[data-library]').forEach(el => el.onclick = () => {
   document.querySelectorAll('[data-library]').forEach(b => b.classList.toggle('active', b === el));
