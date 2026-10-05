@@ -618,7 +618,8 @@ public final class SeedEngine {
     }
     // Every chunk the placement could use in the chunk rectangle, produced lazily; ring positions ignore the rectangle.
     static Stream<ChunkPos> candidates(StructurePlacement placement,long seed,ChunkGeneratorStructureState structState,int minX,int maxX,int minZ,int maxZ) {
-        if(placement instanceof ConcentricRingsStructurePlacement rings)return structState.getRingPositionsFor(rings).stream();
+        // Strongholds: only the ones that could be in the rectangle are worked out (see Rings).
+        if(placement instanceof ConcentricRingsStructurePlacement rings)return Rings.within(structState,rings,minX,maxX,minZ,maxZ).stream();
         if(placement instanceof RandomSpreadStructurePlacement spread) {
             int s=spread.spacing();
             return IntStream.rangeClosed(Math.floorDiv(minX,s),Math.floorDiv(maxX,s)).boxed().flatMap(rx->IntStream.rangeClosed(Math.floorDiv(minZ,s),Math.floorDiv(maxZ,s)).mapToObj(rz->spread.getPotentialStructureChunk(seed,rx*s,rz*s)));
@@ -633,7 +634,8 @@ public final class SeedEngine {
     static Start startAt(StructureSet set,long seed,RandomState state,ChunkGeneratorStructureState structState,Climate.Sampler climate,ChunkPos c,boolean confirm) { return startAt(OVERWORLD,set,seed,state,structState,climate,c,confirm); }
     // state, structState and climate must be the given dimension's.
     static Start startAt(Dim dim,StructureSet set,long seed,RandomState state,ChunkGeneratorStructureState structState,Climate.Sampler climate,ChunkPos c,boolean confirm) {
-        if(!set.placement().isStructureChunk(structState,c.x(),c.z()))return null;
+        // The game's test for a stronghold chunk looks it up in the full list of 128; Rings answers for this chunk alone.
+        if(set.placement() instanceof ConcentricRingsStructurePlacement rings?!Rings.at(structState,rings,c):!set.placement().isStructureChunk(structState,c.x(),c.z()))return null;
         var entries=new ArrayList<>(set.structures());
         var random=new WorldgenRandom(new LegacyRandomSource(0));random.setLargeFeatureSeed(seed,c.x(),c.z());
         int total=entries.stream().mapToInt(StructureSet.StructureSelectionEntry::weight).sum();
