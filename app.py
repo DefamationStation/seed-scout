@@ -413,7 +413,7 @@ class Engine:
             elif kind=='island':
                 biomes=item.get('biomes') or []
                 if not isinstance(biomes,list) or any(b not in self.catalog['biomes'] for b in biomes): raise ValueError('An island can only be asked for in biomes from the list.')
-                out={'within':number(item,'within',32,2000,'The distance to the island'),'minAcross':number(item,'minAcross',16,1000,'The smallest island'),'maxAcross':number(item,'maxAcross',16,1000,'The largest island'),
+                out={'within':number(item,'within',16,2000,'The distance to the island'),'minAcross':number(item,'minAcross',16,1000,'The smallest island'),'maxAcross':number(item,'maxAcross',16,1000,'The largest island'),
                      'own':item.get('own') in (True,'yes'),'biomes':sorted(set(biomes))}
                 if out['minAcross']>out['maxAcross']: raise ValueError('The smallest island must not be larger than the largest.')
             else: raise ValueError('Unknown landscape condition.')

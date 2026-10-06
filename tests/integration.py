@@ -184,7 +184,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertTrue(found(biomes=["dappled_forest"])["match"])
         # Too near, too small, or the wrong biome: the island no longer fits.
         for miss in ({"within":200},{"maxAcross":80},{"minAcross":200},{"biomes":["desert"]}): self.assertFalse(found(**miss)["match"],miss)
-        for bad in ({"within":8},{"minAcross":300,"maxAcross":100},{"maxAcross":5000},{"biomes":["atlantis"]},{"biomes":"plains"}):
+        for bad in ({"within":8},{"within":2001},{"minAcross":300,"maxAcross":100},{"maxAcross":5000},{"biomes":["atlantis"]},{"biomes":"plains"}):
             self.rejected("/api/inspect",{"seed":"0","features":[],"landscape":[island(**bad)]})
     def test_structure_tiles(self):
         tile=lambda x,z,size,keys=("villages",):api("/api/structures",{"seed":"123","x":x,"z":z,"size":size,"keys":list(keys)})

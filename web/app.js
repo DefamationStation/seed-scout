@@ -420,7 +420,7 @@ function landRows() {
     const biomeList = (first, more) => `<div class="criterion-or">${c.biomes.map(b => `<span class="chip">${glyph('biome', b)}${esc(label(b))}<button data-land-biome-remove="${esc(b)}" data-land="${i}" aria-label="Remove ${esc(label(b))}">×</button></span>`).join('<span>or</span>')}
           <select data-land-biome="${i}" aria-label="Add a biome"><option value="">${c.biomes.length ? more : first}</option>${(catalog?.biomes || []).filter(b => !c.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}</select></div>`;
     const rule = c.type === 'island'
-      ? `<span>Within</span>${num('within', 'Distance to the island')}<span>blocks, an island</span>${num('minAcross', 'Smallest island')}<span>to</span>${num('maxAcross', 'Largest island')}<span>blocks across with a river all the way round it,</span>${pick('own', 'The island\'s biome', [['yes', 'in a biome its banks do not have'], ['no', 'whatever the banks are']])}${around}
+      ? `<span>Within</span>${num('within', 'Distance to the island')}<span>blocks, an island</span>${num('minAcross', 'Smallest island')}<span>to</span>${num('maxAcross', 'Largest island')}<span>blocks across with a river all the way round it,</span>${pick('own', 'The island\'s biome', [['no', 'in any biome'], ['yes', 'only in a biome its banks do not have']])}${around}
         ${biomeList('Any biome (choose one to narrow it)…', '+ or…')}`
       : c.type === 'coverage'
       ? `${pick('mode', 'At least or at most', [['min', 'At least'], ['max', 'At most']])}${num('share', 'Share of the area')}<span>% of the land within</span>${num('radius', 'Distance')}<span>blocks is</span>${around}

@@ -472,9 +472,11 @@ public final class SeedEngine {
         if(found==null)return null;
         // The shape of the land costs the most to read, so it is looked at only where everything else holds.
         if(request.has("landscape")) {
-            var land=Landscape.check(request.getAsJsonArray("landscape"),state,x,z,found,()->job==null||job.running.get());
+            // A condition around a structure may settle on another one of them in range, which then replaces the nearest.
+            var held=new ArrayList<>(found);
+            var land=Landscape.check(request.getAsJsonArray("landscape"),state,x,z,held,()->job==null||job.running.get(),anchors(parsed,seed,state,structState,x,z,request,job));
             if(land==null)return null;
-            found=new ArrayList<>(found);found.addAll(land);
+            found=held;found.addAll(land);
         }
         if(spawnLater)origin=targets.isEmpty()?generator.getOrigin(state):SpawnSearch.find(state,targets,(cx,cz)->chunk->true);
         var result=new LinkedHashMap<String,Object>();result.put("seed",Long.toString(seed));
@@ -536,6 +538,29 @@ public final class SeedEngine {
             if(Math.hypot(across.applyAsInt(a,"x")-across.applyAsInt(b,"x"),across.applyAsInt(a,"z")-across.applyAsInt(b,"z"))>cluster)return null;
         }
         return found;
+    }
+    // For a landscape condition measured around a structure: every one of that structure within its distance, not
+    // only the nearest. Offered for a plain condition on one Overworld structure (no count above one, no alternative,
+    // nothing else measured from it, no limit on how far apart the matches may lie), where swapping the reported
+    // structure for another changes nothing else about the result.
+    static Landscape.Anchors anchors(List<Feature> parsed,long seed,RandomState state,ChunkGeneratorStructureState structState,int x,int z,JsonObject request,Job job) {
+        if(request.has("cluster")&&request.get("cluster").getAsInt()>0)return null;
+        java.util.function.Function<String,Feature> plain=key->parsed.stream().filter(f->f.key.equals(key)&&f.kind.equals("structure")&&!Decorations.handles(key)&&dimOf(f)==OVERWORLD
+            &&!f.exclude&&f.near==null&&f.or.isEmpty()&&f.count==1&&parsed.stream().noneMatch(d->f.id!=null&&f.id.equals(d.near))).findFirst().orElse(null);
+        return new Landscape.Anchors() {
+            public List<Map<String,Object>> all(String key) {
+                var f=plain.apply(key);if(f==null)return null;
+                var out=new ArrayList<Map<String,Object>>();findStructures(f,seed,state,structState,x,z,job,out,64,false,null);return out;
+            }
+            public Map<String,Object> confirm(String key,Map<String,Object> match) {
+                var f=plain.apply(key);if(f==null)return null;
+                int mx=((Number)match.get("x")).intValue(),mz=((Number)match.get("z")).intValue();
+                var exact=new Feature("structure",f.key,8,0,1,false,null,null,f.variants,f.placements,f.templates,List.of());
+                var out=new ArrayList<Map<String,Object>>();
+                if(findStructures(exact,seed,state,structState,mx,mz,job,out,1,true,null)<1)return null;
+                var built=new LinkedHashMap<>(out.get(0));built.put("distance",Math.round(Math.hypot(mx-x,mz-z)));return built;
+            }
+        };
     }
     // Gate on one necessary positive root condition. Never prune on exclusions,
     // dependent conditions, biome samples, or unsupported placement types.
@@ -1001,7 +1026,7 @@ public final class SeedEngine {
                 var found=around(seed,state,structState,others,x,z,request,null);
                 if(found==null)continue;
                 if(request.has("landscape")) {
-                    var land=Landscape.check(request.getAsJsonArray("landscape"),state,x,z,found,running::get);
+                    var land=Landscape.check(request.getAsJsonArray("landscape"),state,x,z,found,running::get,null);
                     if(land==null)continue;
                     found=new ArrayList<>(found);found.addAll(land);
                 }

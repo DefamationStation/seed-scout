@@ -12,23 +12,63 @@ import net.minecraft.world.level.levelgen.RandomState;
 final class Landscape {
     private Landscape() {}
 
-    /** Every landscape condition around (x, z), or the match a condition names in "from". Null when one fails. */
-    static List<Map<String,Object>> check(JsonArray specs,RandomState state,int x,int z,List<Map<String,Object>> found,BooleanSupplier running) {
+    /** Where a condition measured "around" a structure may look beyond the nearest one: every match of that structure
+     * within its own distance, and the built structure for the one that is settled on. */
+    interface Anchors {
+        List<Map<String,Object>> all(String key);
+        Map<String,Object> confirm(String key,Map<String,Object> match);
+    }
+
+    /** Every landscape condition around (x, z), or the match a condition names in "from". Null when one fails.
+     * A condition measured around a structure holds if it holds around any one of them in range: the nearest is
+     * tried first, then the others, and the one that fits takes the nearest one's place in `found`. Conditions
+     * around the same structure must all hold around the same one. */
+    static List<Map<String,Object>> check(JsonArray specs,RandomState state,int x,int z,List<Map<String,Object>> found,BooleanSupplier running,Anchors anchors) {
         var out=new ArrayList<Map<String,Object>>();
         // Biome and river conditions read the cheap biome estimate; they go first so the terrain ones run less often.
         var order=new ArrayList<JsonObject>();
         for(var item:specs)order.add(item.getAsJsonObject());
         order.sort(Comparator.comparingInt(s->switch(s.get("type").getAsString()){case "coverage"->0;case "river","island"->1;default->2;}));
-        for(var spec:order) {
-            if(!running.getAsBoolean())return null;
-            int ox=x,oz=z;
-            if(spec.has("from")&&!spec.get("from").getAsString().isEmpty()) {
-                // Measured from the reported match of another condition, in the Overworld.
-                String from=spec.get("from").getAsString();
-                var parent=found.stream().filter(m->from.equals(m.get("key"))&&!m.containsKey("dimension")).findFirst().orElse(null);
-                if(parent==null)return null;
-                ox=((Number)parent.get("x")).intValue();oz=((Number)parent.get("z")).intValue();
+        var around=new LinkedHashMap<String,List<JsonObject>>();
+        for(var spec:order)around.computeIfAbsent(spec.has("from")?spec.get("from").getAsString():"",k->new ArrayList<>()).add(spec);
+        for(var group:around.entrySet()) {
+            String from=group.getKey();
+            if(from.isEmpty()) {
+                var here=at(group.getValue(),state,x,z,x,z,"",running);
+                if(here==null)return null;
+                out.addAll(here);continue;
             }
+            // Measured from the reported match of another condition, in the Overworld.
+            int index=-1;
+            for(int i=0;i<found.size()&&index<0;i++)if(from.equals(found.get(i).get("key"))&&!found.get(i).containsKey("dimension"))index=i;
+            if(index<0)return null;
+            var nearest=found.get(index);int nx=((Number)nearest.get("x")).intValue(),nz=((Number)nearest.get("z")).intValue();
+            var there=at(group.getValue(),state,nx,nz,x,z,from,running);
+            if(there==null) {
+                var others=anchors==null?null:anchors.all(from);
+                if(others==null)return null;
+                for(var other:others) {
+                    if(!running.getAsBoolean())return null;
+                    int ox=((Number)other.get("x")).intValue(),oz=((Number)other.get("z")).intValue();
+                    if(ox==nx&&oz==nz)continue;
+                    var fits=at(group.getValue(),state,ox,oz,x,z,from,running);
+                    if(fits==null)continue;
+                    var built=anchors.confirm(from,other);
+                    if(built==null)continue;
+                    found.set(index,built);there=fits;break;
+                }
+                if(there==null)return null;
+            }
+            out.addAll(there);
+        }
+        out.sort(Comparator.comparingInt(m->(Integer)m.get("index")));
+        return out;
+    }
+    // The given conditions around (ox, oz), where (x, z) is the search origin. Null when one fails.
+    private static List<Map<String,Object>> at(List<JsonObject> specs,RandomState state,int ox,int oz,int x,int z,String from,BooleanSupplier running) {
+        var out=new ArrayList<Map<String,Object>>();
+        for(var spec:specs) {
+            if(!running.getAsBoolean())return null;
             var match=switch(spec.get("type").getAsString()) {
                 case "coverage"->coverage(spec,state,ox,oz);
                 case "flat"->flat(spec,state,ox,oz);
@@ -40,10 +80,9 @@ final class Landscape {
             if(match==null)return null;
             match.put("kind","terrain");match.put("key",spec.get("type").getAsString());match.put("index",spec.get("index").getAsInt());
             match.putIfAbsent("x",ox);match.putIfAbsent("z",oz);match.putIfAbsent("distance",0);
-            if(ox!=x||oz!=z)match.put("from",spec.get("from").getAsString());
+            if(!from.isEmpty())match.put("from",from);
             out.add(match);
         }
-        out.sort(Comparator.comparingInt(m->(Integer)m.get("index")));
         return out;
     }
 
