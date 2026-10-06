@@ -42,6 +42,8 @@ def relaxed(request):
             c.update(across=int(c['across']*(1-ease)),radius=round(c['radius']*(1+ease)),minRadius=int(c['minRadius']*(1-ease)))
         elif c['type']=='river':
             c.update(within=round(c['within']*(1+ease)),length=int(c['length']*(1-ease)),width=int(c['width']*(1-ease)),shape={'very':'fairly','fairly':'any'}.get(c['shape'],'any'))
+        elif c['type']=='island':
+            c.update(within=round(c['within']*(1+ease)),minAcross=int(c['minAcross']*(1-ease)),maxAcross=round(c['maxAcross']*(1+ease)))
     return out
 def judge(request,result):
     """Mark a result found with a leeway as close when it misses what was asked, and say by how much."""
@@ -72,6 +74,9 @@ def judge(request,result):
             if m['length']<c['length']: say(f"{m['length']:,} long where {c['length']:,} was asked")
             if m['width']<c['width']: say(f"{m['width']} wide where {c['width']} was asked")
             if {'straight':2,'fairly straight':1}.get(m['shape'],0)<{'very':2,'fairly':1}.get(c['shape'],0): say(f"{m['shape']} where {'very' if c['shape']=='very' else 'fairly'} straight was asked")
+        elif kind=='island':
+            if m['distance']>c['within']: say(f"{m['distance']:,} blocks away where {c['within']:,} was asked")
+            if not c['minAcross']<=m['across']<=c['maxAcross']: say(f"{m['across']} blocks across where {c['minAcross']}–{c['maxAcross']} was asked")
     if misses: result.update(close=True,misses=misses)
     return result
 
@@ -377,7 +382,7 @@ class Engine:
             if set(values)==set(allowed): f.pop(field,None)
             else: f[field]=values
     def validate_landscape(self,request):
-        """Conditions on the shape of the land: biome coverage, flat ground, high ground and a river."""
+        """Conditions on the shape of the land: biome coverage, flat ground, high ground, a river and an island in one."""
         items=request.get('landscape')
         if not items: request.pop('landscape',None); return
         if not isinstance(items,list) or len(items)>12: raise ValueError('Use up to 12 landscape conditions.')
@@ -405,6 +410,12 @@ class Engine:
             elif kind=='river':
                 out={'within':number(item,'within',16,2000,'The distance to the river'),'length':number(item,'length',32,4000,'The river length'),'width':number(item,'width',0,120,'The river width'),
                      'shape':item.get('shape') if item.get('shape') in ('fairly','very') else 'any'}
+            elif kind=='island':
+                biomes=item.get('biomes') or []
+                if not isinstance(biomes,list) or any(b not in self.catalog['biomes'] for b in biomes): raise ValueError('An island can only be asked for in biomes from the list.')
+                out={'within':number(item,'within',32,2000,'The distance to the island'),'minAcross':number(item,'minAcross',16,1000,'The smallest island'),'maxAcross':number(item,'maxAcross',16,1000,'The largest island'),
+                     'own':item.get('own') in (True,'yes'),'biomes':sorted(set(biomes))}
+                if out['minAcross']>out['maxAcross']: raise ValueError('The smallest island must not be larger than the largest.')
             else: raise ValueError('Unknown landscape condition.')
             source=item.get('from') or ''
             if source and source not in anchors: raise ValueError('A landscape condition can only be measured from a structure or biome you want nearby.')

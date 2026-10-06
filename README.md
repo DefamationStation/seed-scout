@@ -9,7 +9,7 @@ Find Minecraft Java seeds with the structures and biomes you want, then explore 
 ## What it does
 
 - **Find seeds:** combine structures, biomes, distances, counts and exclusions around spawn or custom coordinates. Look for a village near a cherry grove, several ancient cities together, or a fortress near your first Nether portal.
-- **Ask for a landscape:** a large plains, flat ground to build on, a hill in reach, or a river of a given length, width and straightness. Results can be ranked by how well they fit.
+- **Ask for a landscape:** a large plains, flat ground to build on, a hill in reach, a river of a given length, width and straightness, or an island that a river closes right round, in a biome of its own. Results can be ranked by how well they fit.
 - **See what comes close:** set a leeway and results that narrowly miss a distance or landscape threshold are listed as close, with what they missed. It tells a search that is too strict from one that cannot be met.
 - **Dungeons and amethyst geodes:** predicted by running the game's own placement code on the terrain and carved caves. In a test against a real world, 86% of its dungeons were found at the exact block and 94% of predicted dungeons were real; every geode was found and about 7 in 10 predicted geodes were real. These are slow to search, so they work best with other conditions.
 - **Search an existing seed:** find places within one world that match your conditions.

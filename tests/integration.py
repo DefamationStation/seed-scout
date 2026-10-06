@@ -172,6 +172,20 @@ class SnapshotTests(unittest.TestCase):
     def rejected(self,path,data):
         with self.assertRaises(urllib.error.HTTPError) as e: api(path,data)
         self.assertEqual(e.exception.code,400)
+    def test_island_in_a_river(self):
+        # Seed 2308435889659057025 has a dappled forest island about 120 blocks across, ringed by river, north-west of its spawn.
+        island=lambda **kw: {"type":"island","within":500,"minAcross":40,"maxAcross":300,"own":"yes","biomes":[],**kw}
+        found=lambda **kw: api("/api/inspect",{"seed":"2308435889659057025","features":[],"landscape":[island(**kw)]})
+        match=found();self.assertTrue(match["match"])
+        fact=next(f for f in match["features"] if f["kind"]=="terrain" and f["key"]=="island")
+        self.assertEqual((fact["x"],fact["z"],fact["biome"],fact["own"]),(-176,-344,"dappled_forest",True))
+        self.assertTrue(40<=fact["across"]<=300 and fact["distance"]<=500 and fact["sides"]>=9)
+        self.assertNotIn("dappled_forest",fact["around"])
+        self.assertTrue(found(biomes=["dappled_forest"])["match"])
+        # Too near, too small, or the wrong biome: the island no longer fits.
+        for miss in ({"within":200},{"maxAcross":80},{"minAcross":200},{"biomes":["desert"]}): self.assertFalse(found(**miss)["match"],miss)
+        for bad in ({"within":8},{"minAcross":300,"maxAcross":100},{"maxAcross":5000},{"biomes":["atlantis"]},{"biomes":"plains"}):
+            self.rejected("/api/inspect",{"seed":"0","features":[],"landscape":[island(**bad)]})
     def test_structure_tiles(self):
         tile=lambda x,z,size,keys=("villages",):api("/api/structures",{"seed":"123","x":x,"z":z,"size":size,"keys":list(keys)})
         quadrants=[tile(x,z,2048) for x in (-2048,0) for z in (-2048,0)]

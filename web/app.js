@@ -43,6 +43,7 @@ const ICONS = {
   trash: 'M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13M10 11v6M14 11v6',
   tree: 'M12 22v-7M12 15c-4 0-7-2.7-7-6.5C5 5.2 8 3 12 3s7 2.2 7 5.5c0 3.8-3 6.5-7 6.5z',
   waves: 'M3 9c3-3 6 3 9 0s6-3 9 0M3 15c3-3 6 3 9 0s6-3 9 0',
+  island: 'M6.5 13.5c.8-3.6 2.8-5.5 5.5-5.5s4.7 1.9 5.5 5.5zM3 18c3-3 6 3 9 0s6-3 9 0',
   // Structures
   village: 'M3 11.5 12 4l9 7.5M5.5 10v10h13V10M10 20v-5.5h4V20',
   outpost: 'M6 21V4M6 5h11l-3 4 3 4H6',
@@ -105,6 +106,7 @@ const LAND = {
   flat: { name: 'Flat ground', icon: 'contour', hint: 'Level land to build on', make: () => ({ share: 65, radius: 200, tolerance: 5 }) },
   hill: { name: 'High ground', icon: 'mountain', hint: 'A hill or mountain in reach', make: () => ({ rise: 30, measure: 'above', minRadius: 150, radius: 500, across: 32 }) },
   river: { name: 'River', icon: 'waves', hint: 'A river running close by', make: () => ({ within: 150, length: 200, width: 0, shape: 'any' }) },
+  island: { name: 'Island in a river', icon: 'island', hint: 'Land a river closes right round, in its own biome', make: () => ({ within: 500, minAcross: 40, maxAcross: 300, own: 'yes', biomes: [] }) },
 };
 const label = key => STRUCTURES[key]?.[0] || LAND[key]?.name || String(key).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 const STRUCTURE_FAMILIES = ['villages', 'mineshafts', 'ocean_ruins', 'shipwrecks', 'abandoned_camp', 'igloos', 'ruined_portals', 'huge_ruined_portals', 'bastion_remnants', 'end_cities'];
@@ -355,7 +357,7 @@ function syncAnchor() {
 // Conditions on the shape of the land: read from terrain, checked last, and scored so results can be ranked.
 // They live beside the structure and biome conditions and any number of each can be added.
 let landscape = [];
-const LAND_LIMITS = { share: [1, 100], radius: [32, 4000], tolerance: [0, 64], rise: [-64, 320], minRadius: [0, 3968], across: [0, 2000], within: [16, 2000], length: [32, 4000], width: [0, 120] };
+const LAND_LIMITS = { share: [1, 100], radius: [32, 4000], tolerance: [0, 64], rise: [-64, 320], minRadius: [0, 3968], across: [0, 2000], within: [16, 2000], length: [32, 4000], width: [0, 120], minAcross: [16, 1000], maxAcross: [16, 1000] };
 const landCondition = type => ({ type, from: '', ...LAND[type].make() });
 function restoreLandscape(items) {
   landscape = (Array.isArray(items) ? items : []).filter(c => c && LAND[c.type]).map(c => ({ ...landCondition(c.type), ...c }));
@@ -366,6 +368,7 @@ function landFact(f) {
   if (f.key === 'coverage') return `${(f.biomes || []).map(b => label(b)).join(' / ')} ${f.share}%`;
   if (f.key === 'flat') return `${f.share}% level at Y ${f.level}`;
   if (f.key === 'hill') return `${f.rise} blocks up · ${fmt(f.across)} across · ${fmt(f.distance)} away`;
+  if (f.key === 'island') return `${label(f.biome)} · ${fmt(f.across)} across · water on ${f.sides} of 12 sides · ${fmt(f.distance)} away`;
   return `${fmt(f.length)} long · ${f.width} wide · ${f.shape} · ${fmt(f.distance)} away`;
 }
 // The same condition as it was asked for (the rare-find catalogue and the seed card describe a search with it).
@@ -373,6 +376,7 @@ function landWish(c) {
   if (c.type === 'coverage') return `${c.mode === 'max' ? 'at most' : 'at least'} ${c.share}% ${c.biomes.map(b => label(b).toLowerCase()).join(' or ')} within ${fmt(c.radius)}`;
   if (c.type === 'flat') return `${c.share}% level ground within ${fmt(c.radius)}`;
   if (c.type === 'hill') return `ground ${c.measure === 'y' ? `at Y ${c.rise}` : `${c.rise} blocks up`} ${fmt(c.minRadius)}–${fmt(c.radius)} away`;
+  if (c.type === 'island') return `a river island within ${fmt(c.within)}, ${fmt(c.minAcross)}–${fmt(c.maxAcross)} across${c.biomes?.length ? `, of ${c.biomes.map(b => label(b).toLowerCase()).join(' or ')}` : ''}${c.own === 'yes' || c.own === true ? ', in its own biome' : ''}`;
   return `${c.shape === 'very' ? 'a very straight' : c.shape === 'fairly' ? 'a fairly straight' : 'a'} river within ${fmt(c.within)}, ${fmt(c.length)} long`;
 }
 // A result found with a leeway that misses what was asked: what it missed, one line each.
@@ -413,7 +417,12 @@ function landRows() {
     const num = (param, name) => `<input type="number" data-land="${i}" data-param="${param}" value="${c[param]}" min="${LAND_LIMITS[param][0]}" max="${LAND_LIMITS[param][1]}" aria-label="${name}">`;
     const pick = (param, name, options) => `<select data-land="${i}" data-param="${param}" aria-label="${name}">${options.map(([value, text]) => `<option value="${value}" ${c[param] === value ? 'selected' : ''}>${text}</option>`).join('')}</select>`;
     const around = anchors.length ? `<span class="origin"><span>around</span>${pick('from', 'Where it is measured', [['', 'the search origin'], ...anchors.map(f => [esc(f.key), `the ${esc(label(f.key).toLowerCase())}`])])}</span>` : '';
-    const rule = c.type === 'coverage'
+    const biomeList = (first, more) => `<div class="criterion-or">${c.biomes.map(b => `<span class="chip">${glyph('biome', b)}${esc(label(b))}<button data-land-biome-remove="${esc(b)}" data-land="${i}" aria-label="Remove ${esc(label(b))}">×</button></span>`).join('<span>or</span>')}
+          <select data-land-biome="${i}" aria-label="Add a biome"><option value="">${c.biomes.length ? more : first}</option>${(catalog?.biomes || []).filter(b => !c.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}</select></div>`;
+    const rule = c.type === 'island'
+      ? `<span>Within</span>${num('within', 'Distance to the island')}<span>blocks, an island</span>${num('minAcross', 'Smallest island')}<span>to</span>${num('maxAcross', 'Largest island')}<span>blocks across with a river all the way round it,</span>${pick('own', 'The island\'s biome', [['yes', 'in a biome its banks do not have'], ['no', 'whatever the banks are']])}${around}
+        ${biomeList('Any biome (choose one to narrow it)…', '+ or…')}`
+      : c.type === 'coverage'
       ? `${pick('mode', 'At least or at most', [['min', 'At least'], ['max', 'At most']])}${num('share', 'Share of the area')}<span>% of the land within</span>${num('radius', 'Distance')}<span>blocks is</span>${around}
         <div class="criterion-or">${c.biomes.map(b => `<span class="chip">${glyph('biome', b)}${esc(label(b))}<button data-land-biome-remove="${esc(b)}" data-land="${i}" aria-label="Remove ${esc(label(b))}">×</button></span>`).join('<span>or</span>')}
           <select data-land-biome="${i}" aria-label="Add a biome"><option value="">${c.biomes.length ? '+ or…' : 'Choose a biome…'}</option>${(catalog?.biomes || []).filter(b => !c.biomes.includes(b)).sort((a, b) => label(a).localeCompare(label(b))).map(b => `<option value="${esc(b)}">${esc(label(b))}</option>`).join('')}</select></div>`
@@ -435,6 +444,7 @@ function commitLandscape() {
     c[param] = Math.max(low, Math.min(high, Math.round(Number(el.value) || 0)));
   }
   for (const c of landscape) if (c.type === 'hill') c.minRadius = Math.min(c.minRadius, Math.max(0, c.radius - 32));
+  for (const c of landscape) if (c.type === 'island') c.minAcross = Math.min(c.minAcross, c.maxAcross);
 }
 function addLandscape(type) {
   if (landscape.length >= 12) return toast('Use up to 12 landscape conditions.', true);

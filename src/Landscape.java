@@ -5,7 +5,7 @@ import net.minecraft.core.QuartPos;
 import net.minecraft.world.level.levelgen.RandomState;
 
 /** Conditions on the shape of the land around a point: how much of it is one biome, how level it is, whether
- * there is high ground in reach, and whether a river runs by. They cost far more than a structure or biome check
+ * there is high ground in reach, whether a river runs by, and whether a river closes round an island. They cost far more than a structure or biome check
  * (hundreds of terrain columns), so they are tested last, on places that already hold every other condition.
  * Each one reports what it measured and a score from 0 to 1, so results can be ranked by how well they fit.
  */
@@ -18,7 +18,7 @@ final class Landscape {
         // Biome and river conditions read the cheap biome estimate; they go first so the terrain ones run less often.
         var order=new ArrayList<JsonObject>();
         for(var item:specs)order.add(item.getAsJsonObject());
-        order.sort(Comparator.comparingInt(s->switch(s.get("type").getAsString()){case "coverage"->0;case "river"->1;default->2;}));
+        order.sort(Comparator.comparingInt(s->switch(s.get("type").getAsString()){case "coverage"->0;case "river","island"->1;default->2;}));
         for(var spec:order) {
             if(!running.getAsBoolean())return null;
             int ox=x,oz=z;
@@ -34,6 +34,7 @@ final class Landscape {
                 case "flat"->flat(spec,state,ox,oz);
                 case "hill"->hill(spec,state,ox,oz);
                 case "river"->river(spec,state,ox,oz);
+                case "island"->island(spec,state,ox,oz);
                 default->throw new IllegalArgumentException("Unknown landscape condition: "+spec.get("type").getAsString());
             };
             if(match==null)return null;
@@ -183,5 +184,101 @@ final class Landscape {
             }
         }
         return best;
+    }
+
+    /** Land that a river closes right round: an island of the size asked for, within reach, standing in water.
+     * The river biome is read every 8 blocks around the point. Land that cannot be left without crossing river is
+     * an island; a step across a corner between two river cells counts as leaving, so the ring has no thin places.
+     * Water is then looked for on the real terrain along twelve lines out from the island's middle, because the
+     * river biome is a band wider than its water and, in high country, can be a dry valley. */
+    static Map<String,Object> island(JsonObject spec,RandomState state,int x,int z) {
+        int within=spec.get("within").getAsInt(),least=spec.get("minAcross").getAsInt(),most=spec.get("maxAcross").getAsInt();
+        boolean own=spec.has("own")&&spec.get("own").getAsBoolean();var wanted=new HashSet<String>();
+        if(spec.has("biomes"))for(var b:spec.getAsJsonArray("biomes"))wanted.add(b.getAsString());
+        final int step=8,radius=within+most/2+96,half=radius/step,size=2*half+1,high=SeedEngine.ABOVE_SURFACE;
+        var lookup=BiomeGate.lookup(state);
+        var river=new boolean[size*size];boolean any=false;
+        for(int gx=0;gx<size;gx++)for(int gz=0;gz<size;gz++) {
+            int qx=QuartPos.fromBlock(x+(gx-half)*step),qz=QuartPos.fromBlock(z+(gz-half)*step);
+            if(lookup.is("river",qx,high,qz)||lookup.is("frozen_river",qx,high,qz)){river[gx*size+gz]=true;any=true;}
+        }
+        if(!any)return null;
+        // Everything that can be reached from the edge of the area without crossing river is not an island.
+        var open=new boolean[size*size];var queue=new ArrayDeque<Integer>();
+        for(int i=0;i<size;i++)for(int cell:new int[]{i,(size-1)*size+i,i*size,i*size+size-1})if(!river[cell]&&!open[cell]){open[cell]=true;queue.add(cell);}
+        while(!queue.isEmpty()) {
+            int cell=queue.poll(),cx=cell/size,cz=cell%size;
+            for(int ax=-1;ax<=1;ax++)for(int az=-1;az<=1;az++) {
+                int nx=cx+ax,nz=cz+az,next=nx*size+nz;
+                if(nx<0||nz<0||nx>=size||nz>=size||river[next]||open[next])continue;
+                open[next]=true;queue.add(next);
+            }
+        }
+        var island=new int[size*size];int islands=0;Map<String,Object> best=null;double bestScore=-1;
+        for(int start=0;start<island.length;start++) {
+            if(river[start]||open[start]||island[start]!=0)continue;
+            int id=++islands;var cells=new ArrayList<Integer>();queue.add(start);island[start]=id;
+            while(!queue.isEmpty()) {
+                int cell=queue.poll();cells.add(cell);int cx=cell/size,cz=cell%size;
+                for(int ax=-1;ax<=1;ax++)for(int az=-1;az<=1;az++) {
+                    int nx=cx+ax,nz=cz+az,next=nx*size+nz;
+                    if(nx<0||nz<0||nx>=size||nz>=size||river[next]||open[next]||island[next]!=0)continue;
+                    island[next]=id;queue.add(next);
+                }
+            }
+            // As wide as a circle of the same area.
+            int across=(int)Math.round(2*Math.sqrt(cells.size()*(double)step*step/Math.PI));
+            if(across<least||across>most)continue;
+            double mx=0,mz=0;for(int cell:cells){mx+=cell/size;mz+=cell%size;}
+            int cx=(int)Math.round(mx/cells.size()),cz=(int)Math.round(mz/cells.size()),ix=x+(cx-half)*step,iz=z+(cz-half)*step;
+            double distance=Math.hypot(ix-x,iz-z);
+            if(distance>within)continue;
+            // Its biome: the commonest on it (every cell of a small island, a spread of 400 of a large one).
+            var on=new HashMap<String,Integer>();int every=Math.max(1,cells.size()/400),read=0;
+            for(int i=0;i<cells.size();i+=every,read++){int cell=cells.get(i);on.merge(name(lookup,x+(cell/size-half)*step,z+(cell%size-half)*step),1,Integer::sum);}
+            String biome=Collections.max(on.entrySet(),Map.Entry.comparingByValue()).getKey();
+            if(biome.contains("ocean")||!wanted.isEmpty()&&!wanted.contains(biome))continue;
+            // The banks: the land met first across the river, in every direction the river is followed from the island.
+            var ring=new HashSet<Integer>();var banks=new LinkedHashSet<Integer>();var frontier=new ArrayDeque<int[]>();
+            for(int cell:cells)frontier.add(new int[]{cell,0});
+            while(!frontier.isEmpty()) {
+                var at=frontier.poll();int ax0=at[0]/size,az0=at[0]%size;
+                for(int ax=-1;ax<=1;ax++)for(int az=-1;az<=1;az++) {
+                    int nx=ax0+ax,nz=az0+az,next=nx*size+nz;
+                    if(nx<0||nz<0||nx>=size||nz>=size||island[next]==id)continue;
+                    if(!river[next]){if(at[1]>0)banks.add(next);continue;}
+                    if(at[1]<16&&ring.add(next))frontier.add(new int[]{next,at[1]+1});
+                }
+            }
+            var beyond=new HashMap<String,Integer>();every=Math.max(1,banks.size()/300);int i=0;
+            for(int cell:banks)if(i++%every==0)beyond.merge(name(lookup,x+(cell/size-half)*step,z+(cell%size-half)*step),1,Integer::sum);
+            boolean distinct=!beyond.containsKey(biome);
+            if(own&&!distinct)continue;
+            // Water on the way out, in twelve directions: the first water column met in the river counts.
+            int wet=0;
+            for(int side=0;side<12;side++) {
+                double ux=Math.cos(side*Math.PI/6),uz=Math.sin(side*Math.PI/6);boolean reached=false;
+                for(int t=0;t<2*size;t++) {
+                    int gx=(int)Math.round(cx+ux*t),gz=(int)Math.round(cz+uz*t);
+                    if(gx<0||gz<0||gx>=size||gz>=size)break;
+                    int cell=gx*size+gz;
+                    if(island[cell]==id){if(reached)break;continue;}
+                    if(!river[cell])break;
+                    reached=true;
+                    if(column(state,x+(gx-half)*step,z+(gz-half)*step).water()){wet++;break;}
+                }
+            }
+            if(wet<9)continue;
+            double share=(double)on.get(biome)/read,score=.5*wet/12+.3*(distinct?1:0)+.2*share;
+            if(score>bestScore||score==bestScore&&best!=null&&distance<((Number)best.get("distance")).doubleValue()) {
+                bestScore=score;
+                best=new LinkedHashMap<>(Map.of("x",ix,"y",SeedEngine.generator.getSeaLevel(),"z",iz,"distance",Math.round(distance),"across",across,"biome",biome,"share",Math.round(share*100),"sides",wet,"own",distinct,"score",score));
+                best.put("around",beyond.entrySet().stream().sorted(Map.Entry.<String,Integer>comparingByValue().reversed()).limit(3).map(Map.Entry::getKey).toList());
+            }
+        }
+        return best;
+    }
+    private static String name(BiomeGate.Lookup lookup,int bx,int bz) {
+        return lookup.biome(QuartPos.fromBlock(bx),SeedEngine.ABOVE_SURFACE,QuartPos.fromBlock(bz)).unwrapKey().orElseThrow().identifier().getPath();
     }
 }
