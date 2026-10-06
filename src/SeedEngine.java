@@ -436,12 +436,21 @@ public final class SeedEngine {
     }
     static Map<String,Object> evaluate(long seed,JsonObject request,JsonArray wanted,Job job) {
         var parsed=job==null?parseFeatures(wanted):job.parsed;
-        boolean custom=request.has("anchor") && request.get("anchor").getAsString().equals("custom");
+        boolean custom=job==null?request.has("anchor") && request.get("anchor").getAsString().equals("custom"):job.custom;
+        // Measured from fixed coordinates, where a structure could be is plain arithmetic on the seed. A seed with too
+        // few potential positions at the wanted distance is refused here, before any of its noise is set up.
+        if(custom) {
+            int cx=job==null?request.get("x").getAsInt():job.x,cz=job==null?request.get("z").getAsInt():job.z;
+            for(var f:job==null?placementGates(parsed):job.placementGates)if(!spaced(f,seed,cx,cz))return null;
+        }
         var state=RandomState.create(access.lookupOrThrow(Registries.NOISE),seed,generator.generatorSettings().value());
         var gate=job==null?spawnGate(parsed):job.spawnGate;
         var targets=generator.generatorSettings().value().spawnTarget();
+        // Fixed coordinates need the spawn only to report it, so it is searched for once a seed has matched.
+        boolean spawnLater=custom&&!(job==null?needsOrigin(parsed,request):job.needsOrigin);
         // The spawn search is the game's own, with the points that cannot win left unsampled (see SpawnSearch).
-        var origin=targets.isEmpty()?generator.getOrigin(state)
+        var origin=spawnLater?new ChunkPos(0,0)
+            : targets.isEmpty()?generator.getOrigin(state)
             : !custom && gate!=null ? SpawnSearch.find(state,targets,(cx,cz)->placementGate(gate,seed,cx,cz))
             : SpawnSearch.find(state,targets,(cx,cz)->chunk->true);
         if(origin==null)return null;
@@ -467,6 +476,7 @@ public final class SeedEngine {
             if(land==null)return null;
             found=new ArrayList<>(found);found.addAll(land);
         }
+        if(spawnLater)origin=targets.isEmpty()?generator.getOrigin(state):SpawnSearch.find(state,targets,(cx,cz)->chunk->true);
         var result=new LinkedHashMap<String,Object>();result.put("seed",Long.toString(seed));
         // Distances are measured from the middle of the spawn chunk, which costs nothing to know; the spawn point
         // itself needs terrain, so it is worked out only for the seeds that are reported.
@@ -503,8 +513,11 @@ public final class SeedEngine {
             if(kept==null)return null;
             groups.add(kept);
         }
-        // Pass 2 builds the structure starts, so every reported structure is still a confirmed start.
-        for(int i=0;i<parsed.size();i++) {
+        // Pass 2 builds the structure starts, so every reported structure is still a confirmed start. A request with
+        // "confirm":"later" leaves that out: its structures are reported on the generation point alone (what /locate
+        // goes by), to be built when one is opened. Building is by far the slowest step where matches are common.
+        boolean later=request.has("confirm")&&request.get("confirm").getAsString().equals("later");
+        for(int i=0;i<parsed.size()&&!later;i++) {
             var feature=chosen[i]!=null?chosen[i]:parsed.get(i);
             if(!feature.kind.equals("structure")||feature.exclude||parsed.get(i).near!=null)continue;
             if(job!=null && !job.running.get())return null;
@@ -530,6 +543,82 @@ public final class SeedEngine {
         return features.stream().filter(f->f.kind.equals("structure") && !Decorations.handles(f.key) && dimOf(f)==OVERWORLD && !f.exclude && f.near==null && f.or.isEmpty() && f.radius<=256)
             .filter(f->set(f.key).placement() instanceof RandomSpreadStructurePlacement p && p.spacing()>=32)
             .min(Comparator.comparingDouble(f->(double)f.radius/((RandomSpreadStructurePlacement)set(f.key).placement()).spacing())).orElse(null);
+    }
+    // The conditions a seed can be refused on from fixed coordinates by placement alone: a structure that must be
+    // there, measured from the coordinates themselves, with no alternative, placed on the game's region grid.
+    record Gate(Feature f,Grid grid) {}
+    static List<Gate> placementGates(List<Feature> features) {
+        return features.stream().filter(f->f.kind.equals("structure") && !Decorations.handles(f.key) && !f.exclude && f.near==null && f.or.isEmpty()
+            && set(f.key).placement() instanceof RandomSpreadStructurePlacement).map(f->new Gate(f,Grid.of((RandomSpreadStructurePlacement)set(f.key).placement()))).toList();
+    }
+    // A region-grid placement as bare arithmetic: the game's own steps (a 48-bit linear generator seeded from the
+    // world seed, the region and the placement's salt, then one or two draws for each axis) without the objects it
+    // makes on the way, which is some ten times quicker. It is tried against the game's method when first made, on
+    // a few thousand seeds and regions; a placement it does not reproduce (another version's, say) is left to the game.
+    record Grid(RandomSpreadStructurePlacement placement,int spacing,int range,long salt,boolean triangular,int offsetX,int offsetZ,boolean exact) {
+        static final long MASK=(1L<<48)-1,MULTIPLIER=0x5DEECE66DL;
+        static final ConcurrentMap<RandomSpreadStructurePlacement,Grid> KEPT=new ConcurrentHashMap<>();
+        static Grid of(RandomSpreadStructurePlacement p) {
+            return KEPT.computeIfAbsent(p,placement->{
+                var offset=placement.locateOffset();int spacing=placement.spacing(),range=spacing-placement.separation();
+                try {
+                    var salt=AbstractSpreadingStructurePlacement.class.getDeclaredMethod("salt");salt.setAccessible(true);
+                    var grid=new Grid(placement,spacing,range,(int)salt.invoke(placement),placement.spreadType()==RandomSpreadType.TRIANGULAR,offset.getX(),offset.getZ(),true);
+                    var random=new Random(spacing*31L+range);
+                    for(int i=0;i<4000;i++) {
+                        // Regions near the origin and out to the world border, on both sides of zero.
+                        long seed=random.nextLong();int reach=i%4==0?30000000/(16*spacing):64,rx=random.nextInt(-reach,reach+1),rz=random.nextInt(-reach,reach+1);
+                        var pos=placement.getLocatePos(placement.getPotentialStructureChunk(seed,rx*spacing,rz*spacing));
+                        if(grid.locate(seed,rx,rz)!=((long)pos.getX()<<32|pos.getZ()&0xffffffffL))return new Grid(placement,spacing,range,0,false,0,0,false);
+                    }
+                    return grid;
+                } catch(ReflectiveOperationException|RuntimeException e) { return new Grid(placement,spacing,range,0,false,0,0,false); }
+            });
+        }
+        // The locate position of the region's one potential structure: block x in the high half, block z in the low.
+        long locate(long seed,int rx,int rz) {
+            long state=(rx*341873128712L+rz*132897987541L+seed+salt^MULTIPLIER)&MASK;
+            int x=0,z=0;
+            for(int draw=0,draws=triangular?4:2;draw<draws;draw++) {
+                state=state*MULTIPLIER+0xBL&MASK;int bits=(int)(state>>>17),value;
+                if((range&range-1)==0)value=(int)((long)range*bits>>31);
+                else for(value=bits%range;bits-value+(range-1)<0;value=bits%range){state=state*MULTIPLIER+0xBL&MASK;bits=(int)(state>>>17);}
+                if(draw<draws/2)x+=value;else z+=value;
+            }
+            if(triangular){x/=2;z/=2;}
+            return (long)((rx*spacing+x<<4)+offsetX)<<32|(rz*spacing+z<<4)+offsetZ&0xffffffffL;
+        }
+    }
+    // Whether enough potential positions of a structure lie at the wanted distance from (x, z), which are Overworld
+    // coordinates. The same positions and distances findStructures goes on to test, so no match is lost.
+    static boolean spaced(Gate gate,long seed,int x,int z) {
+        var f=gate.f;var grid=gate.grid;var at=frame(OVERWORLD,dimOf(f),x,z);
+        int s=grid.spacing,count=0;
+        int minX=Math.floorDiv(Math.floorDiv(at[0]-f.radius-32,16),s),maxX=Math.floorDiv(Math.floorDiv(at[0]+f.radius+32,16),s);
+        int minZ=Math.floorDiv(Math.floorDiv(at[1]-f.radius-32,16),s),maxZ=Math.floorDiv(Math.floorDiv(at[1]+f.radius+32,16),s);
+        long least=(long)f.minRadius*f.minRadius,most=(long)f.radius*f.radius;
+        for(int rx=minX;rx<=maxX;rx++)for(int rz=minZ;rz<=maxZ;rz++) {
+            long dx,dz;
+            if(grid.exact){long at2=grid.locate(seed,rx,rz);dx=(int)(at2>>32)-at[0];dz=(int)at2-at[1];}
+            else{var pos=grid.placement.getLocatePos(grid.placement.getPotentialStructureChunk(seed,rx*s,rz*s));dx=pos.getX()-at[0];dz=pos.getZ()-at[1];}
+            long squared=dx*dx+dz*dz;
+            if(squared>=least&&squared<=most&&++count>=f.count)return true;
+        }
+        return false;
+    }
+    // The world origin (the spawn chunk) decides only where a structure placed "at the dimension origin" stands.
+    // Region-grid and ring placements never read it, so without such a structure, and with no rule on the spawn's
+    // biome, a search from fixed coordinates can leave the spawn search to the seeds it reports.
+    static boolean needsOrigin(List<Feature> features,JsonObject request) {
+        if(request.has("spawnBiomes"))return true;
+        for(var f:features) {
+            var all=new ArrayList<Feature>();all.add(f);all.addAll(f.or);
+            for(var a:all)if(a.kind.equals("structure")&&!Decorations.handles(a.key)) {
+                var placement=set(a.key).placement();
+                if(!(placement instanceof RandomSpreadStructurePlacement)&&!(placement instanceof ConcentricRingsStructurePlacement))return true;
+            }
+        }
+        return false;
     }
     static java.util.function.Predicate<ChunkPos> placementGate(Feature f,long seed,int cx,int cz) {
         var placement=(RandomSpreadStructurePlacement)set(f.key).placement();
@@ -649,9 +738,10 @@ public final class SeedEngine {
             if(point.isEmpty())continue;
             if(!confirm)return new Start(entry.structure(),point.get().position().getY(),null);
             StructureStart start;
-            // The game assembles stronghold pieces through static fields of StrongholdPieces, so only one thread may build
-            // a stronghold at a time; every other structure locks nothing shared.
-            synchronized(structure instanceof StrongholdStructure?StrongholdPieces.class:context) { start=structure.generate(entry.structure(),dim.level,access,dim.generator,dim.generator.getBiomeSource(),climate,state,templates,seed,c,0,dim.heights,structure.biomes()::contains); }
+            // The game assembles stronghold pieces through static fields of StrongholdPieces, and fortress pieces
+            // through static counters of NetherFortressPieces, so only one thread may build one of those at a time;
+            // every other structure locks nothing shared.
+            synchronized(structure instanceof StrongholdStructure?StrongholdPieces.class:structure instanceof net.minecraft.world.level.levelgen.structure.structures.NetherFortressStructure?net.minecraft.world.level.levelgen.structure.structures.NetherFortressPieces.class:context) { start=structure.generate(entry.structure(),dim.level,access,dim.generator,dim.generator.getBiomeSource(),climate,state,templates,seed,c,0,dim.heights,structure.biomes()::contains); }
             if(start.isValid())return new Start(entry.structure(),start.getBoundingBox().minY(),start);
         }
         return null;
@@ -767,6 +857,8 @@ public final class SeedEngine {
         boolean cave=y==-32;
         var surface=generator.generatorSettings().value().noiseRouter().chunkSurfaceLevel();
         var resolver=generator.getBiomeSource().createUncachedResolver(state);
+        // The same lookups through the game's sampler cache, skipped where one climate value rules the biome out (see BiomeGate).
+        var lookup=cave||!mode.equals("exhaustive")?BiomeGate.lookup(state):null;
         var manager=new BiomeManager(resolver,BiomeManager.obfuscateSeed(seed));
         // A sampled scan can miss a tiny patch, but every returned biome point is real.
         var offsets=biomeSamples(f.radius);
@@ -776,16 +868,16 @@ public final class SeedEngine {
             double distance=Math.hypot(bx-x,bz-z);
             if(distance>f.radius||distance<f.minRadius)continue;
             int qx=Math.floorDiv(bx,4),qz=Math.floorDiv(bz,4);
-            if(cave||mode.equals("fast")) { if(!is(resolver.getNoiseBiome(qx,Math.floorDiv(y,4),qz),f.key))continue; }
+            if(cave||mode.equals("fast")) { if(!lookup.is(f.key,qx,Math.floorDiv(y,4),qz))continue; }
             else if(!mode.equals("exhaustive")) {
                 // Above the surface first: one biome lookup instead of a surface estimate, which costs several times
                 // more. Height enters the biome choice through depth alone, and above the surface depth ranks the
                 // surface biomes as it does at the surface, so a point that fails here cannot pass below. Most
                 // points of a search that finds nothing stop at this line.
-                if(!is(resolver.getNoiseBiome(qx,ABOVE_SURFACE,qz),f.key))continue;
+                if(!lookup.is(f.key,qx,ABOVE_SURFACE,qz))continue;
                 // The estimate costs a fraction of a terrain column but reads low, so test it and one step above.
                 int estimate=Math.round(state.sampleBlockValueUncached(surface,bx,0,bz));
-                if(!is(resolver.getNoiseBiome(qx,Math.floorDiv(estimate,4),qz),f.key)&&!is(resolver.getNoiseBiome(qx,Math.floorDiv(estimate+12,4),qz),f.key))continue;
+                if(!lookup.is(f.key,qx,Math.floorDiv(estimate,4),qz)&&!lookup.is(f.key,qx,Math.floorDiv(estimate+12,4),qz))continue;
             }
             int confirmedY=cave?y:generator.getBaseColumn(bx,bz,heights,state).topBlockY();
             if(!is(manager.getBiome(bx,confirmedY,bz),f.key))continue;
@@ -934,11 +1026,11 @@ public final class SeedEngine {
         // A biome anchor: the region is sampled every 64 blocks on the biome source alone, and the sample nearest the
         // origin that the full check confirms stands for the whole region. One place per region is enough to go and look.
         void biomePlaces(RandomState state,int left,int top,List<Map<String,Object>> out) {
-            var resolver=generator.getBiomeSource().createUncachedResolver(state);
+            var lookup=BiomeGate.lookup(state);
             boolean cave=anchor.key.equals("deep_dark")||anchor.key.equals("lush_caves")||anchor.key.equals("dripstone_caves")||anchor.key.equals("sulfur_caves");
             int y=QuartPos.fromBlock(cave?-32:256);
             var hits=new ArrayList<int[]>();
-            for(int bz=top;bz<top+REGION;bz+=64)for(int bx=left;bx<left+REGION;bx+=64)if(is(resolver.getNoiseBiome(QuartPos.fromBlock(bx),y,QuartPos.fromBlock(bz)),anchor.key))hits.add(new int[]{bx,bz});
+            for(int bz=top;bz<top+REGION;bz+=64)for(int bx=left;bx<left+REGION;bx+=64)if(lookup.is(anchor.key,QuartPos.fromBlock(bx),y,QuartPos.fromBlock(bz)))hits.add(new int[]{bx,bz});
             hits.sort(Comparator.comparingDouble(h->Math.hypot(h[0]-ox,h[1]-oz)));
             String mode=request.has("biomeMode")?request.get("biomeMode").getAsString():"terrain";
             var close=new Feature("biome",anchor.key,96,0,1,false,null,null,List.of(),List.of(),List.of(),List.of());
@@ -949,22 +1041,27 @@ public final class SeedEngine {
         }
     }
     static final class Job {
-        final List<Feature> parsed;final Feature spawnGate;
+        final List<Feature> parsed;final Feature spawnGate;final List<Gate> placementGates;final boolean needsOrigin,custom;final int x,z;
         final JsonObject request;final JsonArray features;final long id,start,limit;final int threads,maxMatches;
         // When given, these seeds are checked instead of counting up from start (re-checking catalogued seeds).
         final long[] seeds;
         final AtomicBoolean running=new AtomicBoolean(true);final AtomicLong next=new AtomicLong();final LongAdder tested=new LongAdder();final AtomicInteger matches=new AtomicInteger(),finished=new AtomicInteger();
         final java.util.TreeSet<Long> unfinished=new java.util.TreeSet<>();
-        synchronized long claim(){long index=next.get();if(index>=limit)return -1;unfinished.add(index);next.incrementAndGet();return index;}
+        // Seeds are claimed in runs, so that workers refusing millions of seeds a second do not queue for this lock.
+        // A run is kept to about a millisecond of work: a search that stops loses no more than that from each worker.
+        synchronized long claim(int run){long index=next.get();if(index>=limit)return -1;unfinished.add(index);next.set(Math.min(limit,index+run));return index;}
         synchronized void complete(long index){unfinished.remove(index);}
         synchronized long checkpoint(){return unfinished.isEmpty()?next.get():unfinished.first();}
         final long began=System.nanoTime();volatile String failure="";ScheduledFuture<?> reporting;
-        Job(JsonObject r){request=r;features=r.getAsJsonArray("features");parsed=parseFeatures(features);spawnGate=spawnGate(parsed);id=r.get("id").getAsLong();start=Long.parseLong(r.get("seed").getAsString());threads=r.get("threads").getAsInt();maxMatches=r.get("maxMatches").getAsInt();
+        Job(JsonObject r){request=r;features=r.getAsJsonArray("features");parsed=parseFeatures(features);spawnGate=spawnGate(parsed);placementGates=placementGates(parsed);needsOrigin=needsOrigin(parsed,r);custom=r.has("anchor")&&r.get("anchor").getAsString().equals("custom");x=custom?r.get("x").getAsInt():0;z=custom?r.get("z").getAsInt():0;id=r.get("id").getAsLong();start=Long.parseLong(r.get("seed").getAsString());threads=r.get("threads").getAsInt();maxMatches=r.get("maxMatches").getAsInt();
             seeds=r.has("seeds")?StreamSupport.stream(r.getAsJsonArray("seeds").spliterator(),false).mapToLong(e->Long.parseLong(e.getAsString())).toArray():null;
             limit=seeds!=null?seeds.length:r.get("limit").getAsLong();}
         void report(boolean done){emit(Map.of("type","progress","id",id,"tested",tested.sum(),"matches",Math.min(matches.get(),maxMatches),"seconds",(System.nanoTime()-began)/1e9,"running",!done,"error",failure,"nextSeed",Long.toString(start+checkpoint())));}
         void start(){reporting=PROGRESS.scheduleAtFixedRate(()->report(false),0,500,TimeUnit.MILLISECONDS);for(int i=0;i<threads;i++){var worker=new Thread(()->{
-            try {while(running.get()){long index=claim();if(index<0)break;var result=evaluate(seeds==null?start+index:seeds[(int)index],request,features,this);if(!running.get())break;tested.increment();complete(index);if(result!=null){int count=matches.incrementAndGet();if(count<=maxMatches)emit(Map.of("type","match","id",id,"data",result));if(count>=maxMatches)running.set(false);}}}
+            try {int run=1;while(running.get()){long first=claim(run);if(first<0)break;long end=Math.min(limit,first+run),since=System.nanoTime();
+                for(long index=first;index<end&&running.get();index++){var result=evaluate(seeds==null?start+index:seeds[(int)index],request,features,this);if(!running.get())break;tested.increment();if(result!=null){int count=matches.incrementAndGet();if(count<=maxMatches)emit(Map.of("type","match","id",id,"data",result));if(count>=maxMatches)running.set(false);}}
+                if(!running.get())break;complete(first);
+                long took=System.nanoTime()-since;if(took<500_000&&run<1024)run*=2;else if(took>2_000_000&&run>1)run/=2;}}
             catch(Throwable e){failure=e.toString();running.set(false);e.printStackTrace(System.err);}
             finally{if(finished.incrementAndGet()==threads){running.set(false);reporting.cancel(false);report(true);}}
         },"seed-worker-"+i);

@@ -189,7 +189,7 @@ class SnapshotTests(unittest.TestCase):
         both=tile(0,0,4096,("villages","strongholds"))
         self.assertEqual(sorted((f["x"],f["z"]) for f in both["features"] if f["key"]=="villages"),sorted(v for v in wide if v[0]>=0 and v[1]>=0))
         self.assertEqual(both,tile(0,0,4096,("strongholds","villages")))
-        for bad in ({"size":3000},{"x":1024},{"z":-100},{"x":30000128,"size":1024},{"keys":[]},{"keys":["villages","villages"]},{"keys":["fortresses"]},{"keys":"villages"},{"seed":"9223372036854775808"}):
+        for bad in ({"size":3000},{"x":1024},{"z":-100},{"x":30000128,"size":1024},{"keys":[]},{"keys":["villages","villages"]},{"keys":["castles"]},{"keys":"villages"},{"seed":"9223372036854775808"}):
             self.rejected("/api/structures",{"seed":"123","x":0,"z":0,"size":4096,"keys":["villages"],**bad})
     def test_ruined_portal_placements(self):
         placements=('on_land_surface','partly_buried','on_ocean_floor','in_mountain','underground')
@@ -450,7 +450,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(confirmed["pieces"],134)
         # One chunk east of the village there is no start.
         self.assertEqual(api("/api/structure",{"seed":"123","key":"villages","x":-272,"z":272}),{"valid":False})
-        for bad in ({"key":"fortresses"},{"x":"west"},{"z":30100000},{"seed":""}):
+        for bad in ({"key":"castles"},{"x":"west"},{"z":30100000},{"seed":""}):
             self.rejected("/api/structure",{"seed":"123","key":"villages","x":-288,"z":272,**bad})
     def test_count_min_radius_and_exclude(self):
         village=lambda **extra:{"kind":"structure","key":"villages","radius":1000,**extra}
