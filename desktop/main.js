@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // The version the engine was written against; the backend falls back to another installed one when it is missing.
-const SUPPORTED_VERSION = '26.4-snapshot-2';
+const SUPPORTED_VERSION = '26.4-snapshot-3';
 const UPDATE_INTERVAL = 4 * 60 * 60 * 1000;
 const REPOSITORY = 'DefamationStation/seed-scout';
 

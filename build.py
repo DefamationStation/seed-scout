@@ -6,7 +6,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 DATA = pathlib.Path(os.environ.get('SEED_SCOUT_DATA') or ROOT)
 GAME_HOME = pathlib.Path(os.environ.get('SEED_SCOUT_MINECRAFT') or pathlib.Path(os.environ['APPDATA']) / '.minecraft')
 # The version the engine was written against. Others work when their world-generation classes still match.
-DEFAULT_VERSION = '26.4-snapshot-2'
+DEFAULT_VERSION = '26.4-snapshot-3'
 JDK = pathlib.Path(os.environ.get('SEED_SCOUT_JDK') or ROOT.parent / '.tools/jdk-25.0.4.1+1')
 def engine_memory():
     """Half of this machine's memory for the engine, between 2 and 6 GB."""

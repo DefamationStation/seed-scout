@@ -478,12 +478,13 @@ const PICKER = {
 };
 const SPAWN_TILES = { biome: ['Spawn biome', 'The biome the world spawn is in', 'spawn'], slime: ['Slime chunks', 'Slime chunks around the origin', 'slime'] };
 const spawnMark = which => `<span class="glyph" style="--c:#ffd866">${icon(SPAWN_TILES[which][2])}</span>`;
+const BIOME_HINTS = { ice_caves: 'Underground · ice crystals, icicles and Frostbite habitat' };
 function featureTiles(of, filter) {
   if (of === 'terrain') return Object.entries(LAND).filter(([, land]) => land.name.toLowerCase().includes(filter)).map(([type, land]) => { const count = landscape.filter(c => c.type === type).length;
     return `<button type="button" class="feature land-add ${count ? 'selected' : ''}" data-land-add="${type}">${glyph('terrain', type)}<span class="name">${land.name}<small>${count ? `${count} added · add another` : land.hint}</small></span>${icon('plus', 'tick')}</button>`; }).join('');
   if (of === 'spawn') return Object.entries(SPAWN_TILES).filter(([, tile]) => tile[0].toLowerCase().includes(filter)).map(([which, tile]) => { const on = which === 'biome' ? spawnRules.biomeMode !== 'any' : spawnRules.slimeCount > 0;
     return `<button type="button" class="feature land-add ${on ? 'selected' : ''}" data-spawn-add="${which}">${spawnMark(which)}<span class="name">${tile[0]}<small>${tile[1]}</small></span>${icon(on ? 'check' : 'plus', 'tick')}</button>`; }).join('');
-  const list = [...(of === 'structure' ? catalog.sets.filter(rootStructure) : catalog.biomes)].filter(k => label(k).toLowerCase().includes(filter) || (of === 'structure' && familyKeys(k).some(v => label(v).toLowerCase().includes(filter)))).sort((a, b) => label(a).localeCompare(label(b)));
+  const list = [...(of === 'structure' ? catalog.sets.filter(rootStructure) : catalog.biomes)].filter(k => label(k).toLowerCase().includes(filter) || (of === 'biome' && BIOME_HINTS[k]?.toLowerCase().includes(filter)) || (of === 'structure' && familyKeys(k).some(v => label(v).toLowerCase().includes(filter)))).sort((a, b) => label(a).localeCompare(label(b)));
   // Dungeons and geodes are not structures: the game places them chunk by chunk, and where is worked out the same way.
   const realm = k => (of === 'structure' && (catalog.dimensions?.[k] || (catalog.predicted?.includes(k) ? 'predicted' : ''))) || '', order = ['', 'nether', 'end', 'predicted'];
   list.sort((a, b) => order.indexOf(realm(a)) - order.indexOf(realm(b)));
@@ -495,7 +496,7 @@ function featureTiles(of, filter) {
       return `<div class="feature category-feature ${count ? 'selected' : ''}"><button type="button" class="category-toggle" data-category="${esc(k)}" aria-pressed="${count > 0}">${glyph('structure', k)}<span class="name">${esc(familyName(k))}<small>${esc(filters || (chosen.has(`structure:${k}`) || !count ? 'Any type' : `${count} selected`))}</small></span></button><button type="button" class="subcategory-arrow" data-subcategories="${esc(k)}" aria-label="Narrow ${esc(familyName(k))}" title="Narrow by type">${icon('sliders')}</button></div>`;
     }
     const selected = chosen.has(`${of}:${k}`);
-    return `<label class="feature ${selected ? 'selected' : ''}"><input type="checkbox" data-key="${esc(k)}" data-item-kind="${of}" ${selected ? 'checked' : ''}>${glyph(of, k)}<span class="name">${esc(label(k))}</span>${icon('check', 'tick')}</label>`;
+    return `<label class="feature ${selected ? 'selected' : ''}"><input type="checkbox" data-key="${esc(k)}" data-item-kind="${of}" ${selected ? 'checked' : ''}>${glyph(of, k)}<span class="name">${esc(label(k))}${of === 'biome' && BIOME_HINTS[k] ? `<small>${esc(BIOME_HINTS[k])}</small>` : ''}</span>${icon('check', 'tick')}</label>`;
   })()).join('');
 }
 function renderFeatures() {

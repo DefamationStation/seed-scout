@@ -82,6 +82,8 @@ public final class SeedEngine {
     static volatile Job active;
     static final ScheduledExecutorService PROGRESS=Executors.newSingleThreadScheduledExecutor(r->{var t=new Thread(r,"search-progress");t.setDaemon(true);return t;});
     static final Map<String,String> biomeNames=new TreeMap<>();
+    // Shared by seed searches and searches inside a world; caves must not use surface-height gates.
+    static final Set<String> CAVE_BIOMES=Set.of("deep_dark","lush_caves","dripstone_caves","sulfur_caves","ice_caves");
     static final ConcurrentMap<Integer,List<int[]>> biomeOffsets=new ConcurrentHashMap<>();
     static final int CORES=Runtime.getRuntime().availableProcessors();
     // Tile generation scales with threads; half the cores keeps the map quick and still leaves room for a running search.
@@ -119,7 +121,7 @@ public final class SeedEngine {
         END=new Dim("end",Level.END,end,LevelHeightAccessor.create(end.getMinY(),end.getGenDepth()));
         var scratch=LevelStorageSource.createDefault(Path.of("runtime/template-storage")).createAccess("template-reader");
         templates=new StructureTemplateManager(resources,scratch,DataFixers.getDataFixer(),access.lookupOrThrow(Registries.BLOCK));
-        pieceContext=new StructurePieceSerializationContext(resources,access,templates);
+        pieceContext=SnapshotStructures.pieceContext(resources,access,templates);
         access.lookupOrThrow(Registries.STRUCTURE_SET).listElements().forEach(h->{
             if(h.value().structures().stream().anyMatch(e->e.structure().value().biomes().stream().anyMatch(generator.getBiomeSource().possibleBiomes()::contains))) sets.put(h.key().identifier().getPath(),h);
         });
@@ -766,8 +768,9 @@ public final class SeedEngine {
             // The game assembles stronghold pieces through static fields of StrongholdPieces, and fortress pieces
             // through static counters of NetherFortressPieces, so only one thread may build one of those at a time;
             // every other structure locks nothing shared.
-            synchronized(structure instanceof StrongholdStructure?StrongholdPieces.class:structure instanceof net.minecraft.world.level.levelgen.structure.structures.NetherFortressStructure?net.minecraft.world.level.levelgen.structure.structures.NetherFortressPieces.class:context) { start=structure.generate(entry.structure(),dim.level,access,dim.generator,dim.generator.getBiomeSource(),climate,state,templates,seed,c,0,dim.heights,structure.biomes()::contains); }
-            if(start.isValid())return new Start(entry.structure(),start.getBoundingBox().minY(),start);
+            synchronized(structure instanceof StrongholdStructure?StrongholdPieces.class:structure instanceof net.minecraft.world.level.levelgen.structure.structures.NetherFortressStructure?net.minecraft.world.level.levelgen.structure.structures.NetherFortressPieces.class:context) { start=SnapshotStructures.generate(entry.structure(),dim,context); }
+            // Snapshot 3 returns null on failure; older versions return an empty invalid start.
+            if(start!=null&&!start.getPieces().isEmpty())return new Start(entry.structure(),start.getBoundingBox().minY(),start);
         }
         return null;
     }
@@ -878,7 +881,7 @@ public final class SeedEngine {
     static final int ABOVE_SURFACE=Math.floorDiv(316,4);
     static Map<String,Object> findBiome(Feature f,long seed,RandomState state,int x,int z,Job job,String mode) {
         if(!biomeNames.containsKey(f.key))throw new IllegalArgumentException("Unknown biome: "+f.key);
-        int y=(f.key.equals("deep_dark")||f.key.equals("lush_caves")||f.key.equals("dripstone_caves")||f.key.equals("sulfur_caves"))?-32:64;
+        int y=CAVE_BIOMES.contains(f.key)?-32:64;
         boolean cave=y==-32;
         var surface=generator.generatorSettings().value().noiseRouter().chunkSurfaceLevel();
         var resolver=generator.getBiomeSource().createUncachedResolver(state);
@@ -1052,7 +1055,7 @@ public final class SeedEngine {
         // origin that the full check confirms stands for the whole region. One place per region is enough to go and look.
         void biomePlaces(RandomState state,int left,int top,List<Map<String,Object>> out) {
             var lookup=BiomeGate.lookup(state);
-            boolean cave=anchor.key.equals("deep_dark")||anchor.key.equals("lush_caves")||anchor.key.equals("dripstone_caves")||anchor.key.equals("sulfur_caves");
+            boolean cave=CAVE_BIOMES.contains(anchor.key);
             int y=QuartPos.fromBlock(cave?-32:256);
             var hits=new ArrayList<int[]>();
             for(int bz=top;bz<top+REGION;bz+=64)for(int bx=left;bx<left+REGION;bx+=64)if(lookup.is(anchor.key,QuartPos.fromBlock(bx),y,QuartPos.fromBlock(bz)))hits.add(new int[]{bx,bz});

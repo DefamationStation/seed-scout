@@ -18,7 +18,7 @@ const terrain = (() => {
     wooded_badlands: '#a8743f', savanna: '#bdb25a', savanna_plateau: '#ada258',
     jungle: '#2f8f3a', bamboo_jungle: '#5aa637', sparse_jungle: '#6fae4a',
     swamp: '#5d7650', mangrove_swamp: '#4a6b4c', mushroom_fields: '#b46fb0',
-    deep_dark: '#17303a', lush_caves: '#6f9f3f', dripstone_caves: '#8a6f55', sulfur_caves: '#c6c04e',
+    deep_dark: '#17303a', lush_caves: '#6f9f3f', dripstone_caves: '#8a6f55', sulfur_caves: '#c6c04e', ice_caves: '#98dce8',
   };
   const hex = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
   const BIOME_RGB = Object.fromEntries(Object.entries(BIOMES).map(([k, v]) => [k, hex(v)]));

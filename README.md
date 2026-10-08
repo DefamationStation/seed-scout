@@ -27,7 +27,9 @@ Find Minecraft Java seeds with the structures and biomes you want, then explore 
 
 The desktop app uses a local Python backend and a Java engine compiled against your installed Minecraft version. It calls Minecraft's own biome, terrain and structure-generation code, checking seeds across multiple CPU workers and returning matches that satisfy your conditions. The map samples terrain as you pan and zoom, without generating a complete world.
 
-Built for **Java 26.4 Snapshot 2**. Other installed vanilla versions can be selected if their world-generation code is compatible. Biome sampling can miss small patches, and the map shows base terrain rather than every finished block, decoration or loot chest. Nether and End structures are supported in seed searches; the map and searches inside one seed currently cover the Overworld.
+Built for **Java 26.4 Snapshot 3**, with Snapshot 2 still supported. Other installed vanilla versions can be selected if their world-generation code is compatible. Biome sampling can miss small patches, and the map shows base terrain rather than every finished block, decoration or loot chest. Nether and End structures are supported in seed searches; the map and searches inside one seed currently cover the Overworld.
+
+**Snapshot 3:** Ice Caves can be searched near an origin, linked to structures, excluded, or found inside one seed. They are sampled underground at Y −32, like the other cave biomes; small patches or caves present only at other heights can be missed. Searching for “ice crystals”, “icicles” or “Frostbite” also offers Ice Caves, their habitat. Individual crystals, icicles and dynamically spawning mobs are not separate location markers. The surface map continues to show surface biomes. Biome selection, cave decoration placement sequences and structure checks use the selected snapshot’s native game registries and code.
 
 ## Run from source
 

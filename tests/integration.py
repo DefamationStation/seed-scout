@@ -15,6 +15,19 @@ def stopped():
         time.sleep(.05)
     raise AssertionError("Search did not stop")
 class SnapshotTests(unittest.TestCase):
+    def test_ice_caves_snapshot3(self):
+        catalog=api('/api/status')['catalog']
+        if 'ice_caves' not in catalog['biomes']: self.skipTest('Ice Caves were added in Snapshot 3')
+        cave={'kind':'biome','key':'ice_caves','radius':32}
+        request={'seed':'2','anchor':'custom','x':704,'z':896,'features':[cave]}
+        for mode in ('terrain','fast','exhaustive'):
+            hit=api('/api/inspect',{**request,'biomeMode':mode})
+            self.assertTrue(hit['match'],mode)
+            point=next(f for f in hit['features'] if f['key']=='ice_caves')
+            self.assertEqual((point['x'],point['y'],point['z']),(704,-32,896))
+            self.assertIn('cave-biome',point['confidence'])
+        self.assertFalse(api('/api/inspect',{**request,'features':[{**cave,'mode':'exclude'}]})['match'])
+
     def test_catalog_and_known_seed(self):
         c=api("/api/status")["catalog"]
         self.assertIn("sulfur_caves",c["biomes"])
